@@ -1,39 +1,71 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
-import type { HandyDriver } from '../drivers/handy'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { HandyDriver } from '../drivers/handy'
+import { HandyHspDriver } from '../drivers/handy-hsp'
+import { HandyHdspDriver } from '../drivers/handy-hdsp'
+import type { DiagnosticResult } from '../drivers/handy'
 
 const props = defineProps<{
-  driver: HandyDriver
+  driver: HandyDriver | HandyHspDriver | HandyHdspDriver
 }>()
 
 const emit = defineEmits<{
   save: []
+  'swap-protocol': [protocol: 'stream' | 'hsp' | 'hdsp']
   'test-pattern-point': [position: number]
+  'diagnostic-sent-point': [position: number]
+  'diagnostic-actual-point': [position: number]
 }>()
+
+const protocol = computed(() => {
+  if (props.driver instanceof HandyHdspDriver) return 'hdsp'
+  if (props.driver instanceof HandyHspDriver) return 'hsp'
+  return 'stream'
+})
 
 const connectionKey = ref(props.driver.connectionKey)
 const statusText = ref(props.driver.statusText)
 const errorMessage = ref(props.driver.errorMessage)
 const testRunning = ref(false)
+const diagnosticRunning = ref(false)
+const diagnosticResult = ref<DiagnosticResult | null>(null)
 
 let unsubscribe: (() => void) | null = null
 
-onMounted(() => {
+function subscribeDriver() {
+  unsubscribe?.()
   unsubscribe = props.driver.onStatusChange(() => {
     statusText.value = props.driver.statusText
     errorMessage.value = props.driver.errorMessage
     testRunning.value = props.driver.isTestPatternRunning
+    diagnosticRunning.value = props.driver.isDiagnosticRunning
   })
-})
+  // Sync initial state
+  connectionKey.value = props.driver.connectionKey
+  statusText.value = props.driver.statusText
+  errorMessage.value = props.driver.errorMessage
+}
 
-onUnmounted(() => {
-  unsubscribe?.()
+onMounted(() => subscribeDriver())
+onUnmounted(() => unsubscribe?.())
+
+// Re-subscribe when driver changes (protocol swap)
+watch(() => props.driver, () => {
+  subscribeDriver()
 })
 
 watch(connectionKey, (key) => {
   props.driver.connectionKey = key
   emit('save')
 })
+
+function switchProtocol(newProtocol: 'stream' | 'hsp' | 'hdsp') {
+  if (newProtocol === protocol.value) return
+  if (props.driver.connected) {
+    props.driver.stop()
+  }
+  emit('swap-protocol', newProtocol)
+}
 
 async function connect() {
   props.driver.connectionKey = connectionKey.value
@@ -61,10 +93,47 @@ async function runTestPattern() {
 function stopTestPattern() {
   props.driver.stopTestPattern()
 }
+
+async function runDiagnostic() {
+  diagnosticResult.value = null
+  const result = await props.driver.runDiagnostic(
+    {},
+    (pos) => emit('diagnostic-sent-point', pos),
+    (pos) => emit('diagnostic-actual-point', pos),
+  )
+  diagnosticResult.value = result
+}
+
+function stopDiagnostic() {
+  props.driver.stopDiagnostic()
+}
 </script>
 
 <template>
   <div>
+    <div class="field-group">
+      <label>Protocol</label>
+      <div class="row" style="margin-bottom: 4px">
+        <button
+          :class="{ secondary: protocol !== 'stream' }"
+          class="small"
+          @click="switchProtocol('stream')"
+          :disabled="driver.connected"
+        >STREAM</button>
+        <button
+          :class="{ secondary: protocol !== 'hsp' }"
+          class="small"
+          @click="switchProtocol('hsp')"
+          :disabled="driver.connected"
+        >HSP</button>
+        <button
+          :class="{ secondary: protocol !== 'hdsp' }"
+          class="small"
+          @click="switchProtocol('hdsp')"
+          :disabled="driver.connected"
+        >HDSP</button>
+      </div>
+    </div>
     <div class="field-group">
       <label>Connection Key</label>
       <input v-model="connectionKey" type="text" placeholder="Enter Handy connection key" />
@@ -76,16 +145,37 @@ function stopTestPattern() {
         v-if="!testRunning"
         @click="runTestPattern"
         class="secondary"
-        :disabled="!driver.connected"
+        :disabled="!driver.connected || diagnosticRunning"
       >Test Pattern</button>
       <button
         v-else
         @click="stopTestPattern"
         class="secondary"
       >Stop Test</button>
+      <button
+        v-if="!diagnosticRunning"
+        @click="runDiagnostic"
+        class="secondary"
+        :disabled="!driver.connected || testRunning"
+      >Diagnostic</button>
+      <button
+        v-else
+        @click="stopDiagnostic"
+        class="secondary"
+      >Stop Diag</button>
     </div>
     <div class="text-muted">{{ statusText }}</div>
     <div v-if="testRunning" class="text-muted">Running test pattern... compare purple (target) vs white (sensor) on the graph.</div>
+    <div v-if="diagnosticRunning" class="text-muted">Running diagnostic... white = sent pattern, purple = actual device position.</div>
     <div v-if="errorMessage" class="text-error">{{ errorMessage }}</div>
+    <div v-if="diagnosticResult" class="diag-results">
+      <div class="text-muted"><strong>Diagnostic Results:</strong></div>
+      <div class="text-muted">
+        Latency: {{ diagnosticResult.latencyMs }}ms |
+        RMS Error: {{ diagnosticResult.accuracyRms }} |
+        Overshoot: {{ diagnosticResult.overshoot }} |
+        Points: {{ diagnosticResult.dataPoints.length }}
+      </div>
+    </div>
   </div>
 </template>

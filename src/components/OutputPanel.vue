@@ -10,8 +10,12 @@ import {
   type OutputDeviceEntry,
 } from '../composables/useOutputDevices'
 import { settings, type SavedOutputDevice } from '../composables/useSettings'
-import type { HandyDriver } from '../drivers/handy'
+import { HandyDriver } from '../drivers/handy'
+import { HandyHspDriver } from '../drivers/handy-hsp'
+import { HandyHdspDriver } from '../drivers/handy-hdsp'
 import type { FunscriptDriver } from '../drivers/funscript'
+
+type HandyAnyDriver = HandyDriver | HandyHspDriver | HandyHdspDriver
 
 const outputDevices = useOutputDevices()
 const showAdvanced = ref(false)
@@ -28,7 +32,11 @@ function persistToSettings() {
       filterStrength: d.driver.processor.filterStrength,
     }
     if (d.type === 'handy') {
-      saved.connectionKey = (d.driver as HandyDriver).connectionKey
+      const hDriver = d.driver as HandyAnyDriver
+      saved.connectionKey = hDriver.connectionKey
+      saved.handyProtocol = d.driver instanceof HandyHdspDriver ? 'hdsp'
+        : d.driver instanceof HandyHspDriver ? 'hsp'
+        : 'stream'
     }
     return saved
   })
@@ -40,8 +48,15 @@ function restoreFromSettings() {
     if (sd.peakMotionMode !== undefined) entry.driver.processor.peakMotionMode = sd.peakMotionMode
     if (sd.filterTimeMs !== undefined) entry.driver.processor.filterTimeMs = sd.filterTimeMs
     if (sd.filterStrength !== undefined) entry.driver.processor.filterStrength = sd.filterStrength
-    if (sd.connectionKey && entry.type === 'handy') {
-      ;(entry.driver as HandyDriver).connectionKey = sd.connectionKey
+    if (entry.type === 'handy') {
+      // Set connectionKey before swap so it gets copied to the new driver
+      if (sd.connectionKey) {
+        ;(entry.driver as HandyAnyDriver).connectionKey = sd.connectionKey
+      }
+      // Swap to non-default protocol if needed
+      if (sd.handyProtocol === 'hsp' || sd.handyProtocol === 'hdsp') {
+        swapHandyProtocol(entry, sd.handyProtocol)
+      }
     }
   }
 }
@@ -51,6 +66,39 @@ onMounted(() => {
     restoreFromSettings()
   }
 })
+
+// --- Protocol swap ---
+
+function swapHandyProtocol(device: OutputDeviceEntry, protocol: 'stream' | 'hsp' | 'hdsp') {
+  const oldDriver = device.driver as HandyAnyDriver
+  const connectionKey = oldDriver.connectionKey
+  const filterTimeMs = oldDriver.processor.filterTimeMs
+
+  // Stop old driver
+  oldDriver.destroy()
+
+  // Create new driver of the desired protocol
+  const newDriver = protocol === 'hdsp' ? new HandyHdspDriver()
+    : protocol === 'hsp' ? new HandyHspDriver()
+    : new HandyDriver()
+  newDriver.connectionKey = connectionKey
+  newDriver.processor.filterTimeMs = filterTimeMs
+  newDriver.processor.skipFiltering = true
+  newDriver.processor.peakMotionMode = false
+
+  // Replace the entry in the array to trigger shallowReactive reactivity
+  const idx = outputDevices.devices.indexOf(device)
+  if (idx >= 0) {
+    outputDevices.devices.splice(idx, 1, { ...device, driver: newDriver })
+  }
+  persistToSettings()
+}
+
+function onSwapProtocol(protocol: 'stream' | 'hsp' | 'hdsp') {
+  const device = selectedDevice.value
+  if (!device || device.type !== 'handy') return
+  swapHandyProtocol(device, protocol)
+}
 
 // --- Actions ---
 
@@ -68,6 +116,8 @@ const selectedDevice = computed(() => outputDevices.getSelected())
 
 const emit = defineEmits<{
   'test-pattern-point': [position: number]
+  'diagnostic-sent-point': [position: number]
+  'diagnostic-actual-point': [position: number]
 }>()
 
 defineExpose({
@@ -107,9 +157,12 @@ defineExpose({
       <div class="selected-device-settings">
         <HandySettings
           v-if="selectedDevice.type === 'handy'"
-          :driver="(selectedDevice.driver as HandyDriver)"
+          :driver="(selectedDevice.driver as HandyAnyDriver)"
           @save="persistToSettings"
+          @swap-protocol="onSwapProtocol"
           @test-pattern-point="(pos: number) => emit('test-pattern-point', pos)"
+          @diagnostic-sent-point="(pos: number) => emit('diagnostic-sent-point', pos)"
+          @diagnostic-actual-point="(pos: number) => emit('diagnostic-actual-point', pos)"
         />
         <FunscriptSettings
           v-else-if="selectedDevice.type === 'funscript'"

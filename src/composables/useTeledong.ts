@@ -81,6 +81,11 @@ export function useTeledong() {
         badCalibrationWarning.value = device.BadCalibrationWarning
       } catch (e) {
         console.error('Poll error:', e)
+        state.value = device.State
+        // If device is gone, stop polling
+        if (device.State === TeledongState.NotConnected) {
+          stopPolling()
+        }
       }
     }, 50) // 50ms like the .NET app
   }

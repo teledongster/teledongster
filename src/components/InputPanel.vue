@@ -1,47 +1,38 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch } from 'vue'
 import MotionGraph from './MotionGraph.vue'
 import { useTeledong } from '../composables/useTeledong'
-import { useMouseInput } from '../composables/useMouseInput'
 import { TeledongState } from '../drivers/teledong-sdk'
 
 const emit = defineEmits<{
   position: [value: number]
 }>()
 
-const inputMode = ref<'teledong' | 'mouse'>('teledong')
+const inputMode = ref<'teledong' | 'slider'>('teledong')
 const teledong = useTeledong()
-const mouse = useMouseInput()
+const sliderPosition = ref(0.5)
 const graphRef = ref<InstanceType<typeof MotionGraph> | null>(null)
 const showInfo = ref(false)
 
-let graphInterval: ReturnType<typeof setInterval> | null = null
-
 // Watch position changes and emit + graph
 watch(
-  () => (inputMode.value === 'teledong' ? teledong.position.value : mouse.position.value),
+  () => (inputMode.value === 'teledong' ? teledong.position.value : sliderPosition.value),
   (pos) => {
     emit('position', pos)
     graphRef.value?.addInputPoint(pos)
   }
 )
 
-watch(inputMode, (mode) => {
-  if (mode === 'mouse') {
-    mouse.enable()
-  } else {
-    mouse.disable()
-  }
-})
-
 defineExpose({
+  addInputPoint: (value: number) => graphRef.value?.addInputPoint(value),
   addOutputPoint: (value: number) => graphRef.value?.addOutputPoint(value),
+  setSliderPosition: (value: number) => { sliderPosition.value = value },
 })
 
 const isWebUSBSupported = !!navigator.usb
 
 function statusDotClass(): string {
-  if (inputMode.value === 'mouse') return 'ok'
+  if (inputMode.value === 'slider') return 'ok'
   switch (teledong.state.value) {
     case TeledongState.Ok:
       return 'ok'
@@ -55,7 +46,7 @@ function statusDotClass(): string {
 }
 
 function statusText(): string {
-  if (inputMode.value === 'mouse') return 'Mouse input enabled'
+  if (inputMode.value === 'slider') return 'Slider input enabled'
   switch (teledong.state.value) {
     case TeledongState.Ok:
       return 'Teledong connected, OK'
@@ -88,11 +79,11 @@ function statusText(): string {
           Teledong
         </button>
         <button
-          :class="{ secondary: inputMode !== 'mouse' }"
+          :class="{ secondary: inputMode !== 'slider' }"
           class="small"
-          @click="inputMode = 'mouse'"
+          @click="inputMode = 'slider'"
         >
-          Mouse
+          Slider
         </button>
       </div>
     </div>
@@ -137,8 +128,17 @@ function statusText(): string {
       </button>
     </div>
 
-    <div v-if="inputMode === 'mouse'" class="text-muted" style="margin-bottom: 8px">
-      Move mouse up/down to control position.
+    <div v-if="inputMode === 'slider'" class="slider-container">
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.005"
+        v-model.number="sliderPosition"
+        class="vertical-slider"
+        orient="vertical"
+      />
+      <span class="text-muted">{{ sliderPosition.toFixed(2) }}</span>
     </div>
 
     <MotionGraph ref="graphRef" />
@@ -153,7 +153,7 @@ function statusText(): string {
       <div class="text-muted">
         State: {{ teledong.state.value }}<br />
         Sunlight mode: {{ teledong.sunlightMode.value }}<br />
-        Position: {{ inputMode === 'teledong' ? teledong.position.value.toFixed(3) : mouse.position.value.toFixed(3) }}<br />
+        Position: {{ inputMode === 'teledong' ? teledong.position.value.toFixed(3) : sliderPosition.toFixed(3) }}<br />
         <template v-if="teledong.sensorValues.value.length > 0">
           Raw sensors: {{ teledong.sensorValues.value.map((v) => v.toString(16).padStart(2, '0').toUpperCase()).join(' ') }}
         </template>
@@ -178,5 +178,21 @@ function statusText(): string {
   border-radius: 6px;
   font-family: monospace;
   font-size: 12px;
+}
+
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  height: 150px;
+}
+
+.vertical-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  height: 100%;
+  width: 32px;
+  cursor: pointer;
 }
 </style>

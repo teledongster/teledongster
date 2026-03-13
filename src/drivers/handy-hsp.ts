@@ -1,50 +1,35 @@
-// Handy output driver - STREAM protocol
-// Creates a server-side stream, pushes points to it, and lets the server
-// handle feeding data to the device. No manual buffer management needed.
+// Handy output driver - HSP (Handy Streaming Protocol)
+// Pushes points directly to the device buffer via the HSP v3 API.
+// Alternative to the STREAM protocol driver in handy.ts.
 
 import { OutputProcessor, type OutputCallback } from './output-processor'
+import type { DiagnosticConfig, DiagnosticDataPoint, DiagnosticResult } from './handy'
 
-const STREAM_API_URL = 'https://www.handyfeeling.com/api/stream/v0'
+export type { DiagnosticConfig, DiagnosticDataPoint, DiagnosticResult }
+
+const HSP_API_URL = 'https://www.handyfeeling.com/api/handy-rest/v3/'
 const DEVICE_API_URL = 'https://www.handyfeeling.com/api/handy-rest/v3-next'
+const HSP_AUTH_TOKEN = '6TpU0euyxpYGZFoeQ~AimuZl__kU57U~'
 const APP_ID = 'Bl4tZ-SEEDFxQMy1.2~GJdv2dAZp3OjW'
-const APP_KEY = 'TURGTFMwbzBXVXBYUkZnM01qSlVORlJEVFRCS1VEYzBVMGMjdXh2UFdhUFB6cWRSN25GcHBqeDVvVWhjRG1pbWRfRlZIcG1UaUJwQzh1Zw'
+const BATCH_SIZE = 100
+const THRESHOLD = 20
+const PUSH_INTERVAL_MS = 200
+const POSITION_DEAD_ZONE = 3
 
-const POSITION_DEAD_ZONE = 1 // minimum change in 0-100 to count as real movement
-const PUSH_INTERVAL_MS = 50 // batch and push points every 50ms
-
-interface StreamInfo {
+interface HspState {
   stream_id: number
-  stream_ref: string
-  subscriber_key: string
-  editor_key: string
+  tail_point_stream_index: number
+  tail_point_stream_index_threshold: number
+  play_state: number | string
+  points: number
+  max_points: number
+  current_point: number
+  current_time: number
 }
 
 interface StreamPoint {
   t: number // ms from start
   x: number // 0-100
-}
-
-export interface DiagnosticConfig {
-  pattern: 'bounce' | 'ramp' | 'step' | 'sine' | 'triangle'
-  durationMs: number
-  pushIntervalMs: number
-  timestampOffsetMs: number
-  pollIntervalMs: number
-}
-
-export interface DiagnosticDataPoint {
-  t: number
-  sentX: number | null
-  actualX: number | null
-}
-
-export interface DiagnosticResult {
-  latencyMs: number
-  maxLatencyMs: number
-  accuracyRms: number
-  overshoot: number
-  dataPoints: DiagnosticDataPoint[]
-  config: DiagnosticConfig
 }
 
 interface SliderState {
@@ -55,7 +40,7 @@ interface SliderState {
   motor_temp: number
 }
 
-export class HandyDriver {
+export class HandyHspDriver {
   connectionKey = ''
   connected = false
   errorMessage: string | null = null
@@ -64,19 +49,20 @@ export class HandyDriver {
   private outputHandler: OutputCallback
   private statusListeners: Array<() => void> = []
 
-  // Stream state
-  private streamInfo: StreamInfo | null = null
-  private clientToken: string | null = null
+  // HSP state
+  private streamId: number | null = null
   private startTime = 0
   private clientServerTimeOffset = 0
   private lastPointX = -1
   private eventSource: EventSource | null = null
-  private pendingPoints: Array<{ timestamp: number; x: number }> = []
+  private streamPoints: StreamPoint[] = []
   private pushTimer: ReturnType<typeof setInterval> | null = null
-  private _flushing = false
-  private _lastKeepaliveTime = 0
+  private isPushing = false
+  private tailPointStreamIndex = 0
+  private playbackStarted = false
+  private pointsAccumulated = 0
 
-  // Derived from processor filterTime — acts as the buffer-ahead window
+  // Derived from processor filterTime -- acts as the buffer-ahead window
   private get millisecondsOffset(): number {
     return this.processor.filterTimeMs
   }
@@ -102,169 +88,40 @@ export class HandyDriver {
     this.processor.onOutput(this.outputHandler)
   }
 
-  // Called synchronously from OutputProcessor — push point to stream.
-  // Dead zone filters remaining noise after input-level smoothing.
-  private onPoint(e: { position: number; duration: number }) {
-    if (!this.connected || !this.streamInfo) return
-
-    const x = Math.max(0, Math.min(100, Math.round(e.position * 100)))
-
-    // Dead zone: ignore changes smaller than threshold
-    if (this.lastPointX >= 0 && Math.abs(x - this.lastPointX) < POSITION_DEAD_ZONE) return
-    this.lastPointX = x
-
-    // Store raw timestamp — t is computed at flush time relative to startTime
-    this.pendingPoints.push({ timestamp: Date.now(), x })
-  }
-
-  // Flush any pending points to the stream.
-  // Serialized: if a push is in-flight, skip this tick. Points stay in pendingPoints
-  // with their original timestamps so the next flush picks them up fresh.
-  private async flushPoints() {
-    if (this._flushing) return
-    this._flushing = true
-
-    try {
-      // Grab batch atomically (synchronous swap before any awaits)
-      const raw = this.pendingPoints
-      this.pendingPoints = []
-
-      if (!this.playbackStarted) {
-        if (raw.length === 0) return // no input yet, don't start playback
-        // Set synchronously to prevent concurrent startup
-        this.playbackStarted = true
-        this.startTime = Date.now()
-        const anchorX = raw[0].x
-        await this.pushPoints([{ t: 0, x: anchorX }])
-        await this.startPlayback()
-        console.log(`Playback started at x=${anchorX}`)
-      }
-
-      if (raw.length > 0) {
-        // Convert raw timestamps to stream-relative t values
-        const points: StreamPoint[] = raw.map(p => ({
-          t: Math.round(p.timestamp - this.startTime) + this.millisecondsOffset,
-          x: p.x,
-        }))
-        await this.pushPoints(points)
-      } else if (Date.now() - this._lastKeepaliveTime > 1000) {
-        // Keepalive every ~1s: hold current position so the stream never runs dry
-        const t = Math.round(Date.now() - this.startTime) + this.millisecondsOffset
-        this._lastKeepaliveTime = Date.now()
-        await this.pushPoints([{ t, x: this.lastPointX }])
-      }
-    } finally {
-      this._flushing = false
+  // HSP API request (v3 with Bearer token auth)
+  private async hspRequest(
+    endpoint: string,
+    method: 'GET' | 'PUT',
+    body?: any,
+    quiet = false,
+  ): Promise<{ ok: boolean; result?: any; error?: any }> {
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      'Authorization': `Bearer ${HSP_AUTH_TOKEN}`,
+      'X-Connection-Key': this.connectionKey,
     }
-  }
-
-  private startPushTimer() {
-    this.stopPushTimer()
-    this.pushTimer = setInterval(() => this.flushPoints(), PUSH_INTERVAL_MS)
-  }
-
-  private stopPushTimer() {
-    if (this.pushTimer != null) {
-      clearInterval(this.pushTimer)
-      this.pushTimer = null
-    }
-  }
-
-  // Push points to the stream data endpoint
-  private pushCount = 0
-  private lastPushedX = -1
-  private async pushPoints(points: StreamPoint[]) {
-    // Detect large position jumps that would cause a slam
-    for (const p of points) {
-      if (this.lastPushedX >= 0 && Math.abs(p.x - this.lastPushedX) > 30) {
-        console.warn(`⚠ LARGE JUMP: x ${this.lastPushedX} → ${p.x} (Δ${Math.abs(p.x - this.lastPushedX)}) at t=${p.t}, push #${this.pushCount}`)
-      }
-      this.lastPushedX = p.x
-    }
-    if (!this.streamInfo) return
-    try {
-      const resp = await fetch(`${STREAM_API_URL}/streams/${this.streamInfo.stream_id}/data`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Key': this.streamInfo.subscriber_key,
-        },
-        body: JSON.stringify(points),
-      })
-      this.pushCount++
-      if (!resp.ok) {
-        console.error(`Push #${this.pushCount} [${resp.status}] pts=${points.length} x=${points[0]?.x}-${points[points.length-1]?.x}`)
-      }
-    } catch (ex) {
-      console.error('Failed to push points to stream:', ex)
-    }
-  }
-
-  // Issue a client-token using the Application Key via the device API
-  private async issueClientToken(): Promise<string | null> {
-    try {
-      const resp = await fetch(`${DEVICE_API_URL}/auth/token/issue?ttl=3600`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${APP_KEY}` },
-      })
-      if (!resp.ok) {
-        console.error('Failed to issue client token:', resp.status, await resp.text())
-        return null
-      }
-      const data = await resp.json()
-      console.log('Client token issued')
-      return data.result?.token ?? null
-    } catch (ex) {
-      console.error('Failed to issue client token:', ex)
-      return null
-    }
-  }
-
-  // Create a new stream via the STREAM API (requires client-token)
-  private async createStream(): Promise<StreamInfo | null> {
-    if (!this.clientToken) {
-      this.clientToken = await this.issueClientToken()
-      if (!this.clientToken) return null
+    const options: RequestInit = { method, headers }
+    if (body !== undefined && method !== 'GET') {
+      headers['Content-Type'] = 'application/json'
+      options.body = JSON.stringify(body)
     }
 
     try {
-      const resp = await fetch(`${STREAM_API_URL}/streams`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.clientToken}`,
-        },
-        body: JSON.stringify({ name: 'teledong-live' }),
-      })
-      if (!resp.ok) {
-        console.error('Failed to create stream:', resp.status, await resp.text())
-        // Token may have expired — clear it so next attempt re-issues
-        if (resp.status === 401) this.clientToken = null
-        return null
+      const response = await fetch(`${HSP_API_URL}${endpoint}`, options)
+      const text = await response.text()
+      const data = text ? JSON.parse(text) : null
+      if (!quiet) console.log(`HSP ${method} ${endpoint} -> ${response.status}`, data)
+      if (response.ok) {
+        const result = data?.result ?? data
+        return { ok: true, result }
       }
-      const data = await resp.json()
-      console.log('Stream created:', data)
-      return data.result as StreamInfo
-    } catch (ex) {
-      console.error('Failed to create stream:', ex)
-      return null
+      return { ok: false, error: data?.error ?? data }
+    } catch (e) {
+      return { ok: false, error: e }
     }
   }
 
-  // Close the stream (no more data will be appended)
-  private async closeStream() {
-    if (!this.streamInfo) return
-    try {
-      await fetch(`${STREAM_API_URL}/streams/${this.streamInfo.stream_id}/close`, {
-        method: 'PUT',
-        headers: { 'X-Api-Key': this.streamInfo.editor_key },
-      })
-    } catch {
-      // ignore
-    }
-  }
-
-  // Device REST API request
+  // Device REST API request (v3-next with APP_ID, for slider/state polling)
   private async deviceRequest(
     endpoint: string,
     method: 'GET' | 'PUT',
@@ -286,7 +143,7 @@ export class HandyDriver {
       const response = await fetch(`${DEVICE_API_URL}/${endpoint}`, options)
       const text = await response.text()
       const data = text ? JSON.parse(text) : null
-      if (!quiet) console.log(`Device ${method} ${endpoint} → ${response.status}`, data)
+      if (!quiet) console.log(`Device ${method} ${endpoint} -> ${response.status}`, data)
       if (response.ok) {
         const result = data?.result ?? data
         return { ok: true, result }
@@ -304,7 +161,7 @@ export class HandyDriver {
 
     for (let i = 0; i < numSamples; i++) {
       const t0 = performance.now()
-      const resp = await this.deviceRequest('servertime', 'GET')
+      const resp = await this.hspRequest('servertime', 'GET', undefined, true)
       const roundtripMs = performance.now() - t0
 
       const serverTime = resp.result?.server_time
@@ -324,39 +181,97 @@ export class HandyDriver {
     return offset
   }
 
-  private setupStreamSSE() {
-    if (!this.streamInfo) return
+  // Called synchronously from OutputProcessor -- buffer point for HSP push.
+  // Dead zone filters noise after input-level smoothing.
+  private onPoint(e: { position: number; duration: number }) {
+    if (!this.connected || this.streamId === null) return
 
-    const url = `${STREAM_API_URL}/streams/${this.streamInfo.stream_id}/sse?apikey=${this.streamInfo.editor_key}`
+    const now = Date.now()
+    if (this.startTime === 0) this.startTime = now
+
+    const x = Math.max(0, Math.min(100, Math.round(e.position * 100)))
+
+    // Dead zone: ignore changes smaller than threshold
+    if (this.lastPointX >= 0 && Math.abs(x - this.lastPointX) < POSITION_DEAD_ZONE) return
+    this.lastPointX = x
+
+    const t = Math.round(now - this.startTime) + this.millisecondsOffset
+    this.streamPoints.push({ t, x })
+    this.pointsAccumulated++
+  }
+
+  // Push next batch of points from streamPoints to device buffer.
+  // Starts from device's tail_point_stream_index.
+  private async pushToDevice() {
+    if (this.isPushing || this.streamId === null) return
+    this.isPushing = true
+
+    try {
+      // Determine which points to push based on device's tail index
+      const startIdx = this.tailPointStreamIndex
+      const endIdx = Math.min(startIdx + BATCH_SIZE, this.streamPoints.length)
+
+      if (startIdx >= this.streamPoints.length) {
+        return // nothing to push
+      }
+
+      const batch = this.streamPoints.slice(startIdx, endIdx)
+      if (batch.length === 0) return
+
+      const resp = await this.hspRequest('hsp/add', 'PUT', {
+        points: batch,
+        flush: false,
+        tail_point_stream_index: startIdx,
+      })
+
+      if (resp.ok) {
+        const state = resp.result as HspState
+        this.tailPointStreamIndex = state.tail_point_stream_index
+
+        // Set threshold for buffer-low notification
+        await this.hspRequest('hsp/threshold', 'PUT', {
+          tail_point_threshold: THRESHOLD,
+        }, true)
+      } else {
+        console.error('Failed to push points to device:', resp.error)
+      }
+    } catch (ex) {
+      console.error('Failed to push to device:', ex)
+    } finally {
+      this.isPushing = false
+    }
+  }
+
+  private startPushTimer() {
+    this.stopPushTimer()
+    this.pushTimer = setInterval(() => this.pushToDevice(), PUSH_INTERVAL_MS)
+  }
+
+  private stopPushTimer() {
+    if (this.pushTimer != null) {
+      clearInterval(this.pushTimer)
+      this.pushTimer = null
+    }
+  }
+
+  private setupSSE() {
+    const url = `${HSP_API_URL}sse?ck=${encodeURIComponent(this.connectionKey)}&apikey=${encodeURIComponent(HSP_AUTH_TOKEN)}&events=hsp_threshold_reached,hsp_starving,hsp_state_changed`
     this.eventSource = new EventSource(url)
 
-    const logEvent = (type: string, e: MessageEvent) => {
-      let parsed: any = null
-      try { parsed = JSON.parse(e.data) } catch {}
-      console.warn(`SSE [${type}]`, parsed ?? e.data)
-    }
+    this.eventSource.addEventListener('hsp_threshold_reached', () => {
+      console.log('SSE [hsp_threshold_reached] - pushing more data')
+      this.pushToDevice()
+    })
 
-    this.eventSource.addEventListener('stream_consumer_started', (e: MessageEvent) => logEvent('consumer_started', e))
-    this.eventSource.addEventListener('stream_consumer_stopped', (e: MessageEvent) => logEvent('consumer_stopped', e))
-    this.eventSource.addEventListener('stream_end_reached', (e: MessageEvent) => logEvent('end_reached', e))
-    this.eventSource.addEventListener('stream_closed', (e: MessageEvent) => logEvent('closed', e))
+    this.eventSource.addEventListener('hsp_starving', () => {
+      console.warn('SSE [hsp_starving] - device buffer empty, pushing data')
+      this.pushToDevice()
+    })
 
-    // Monitor server-side data for unexpected jumps
-    let lastServerX = -1
-    this.eventSource.addEventListener('stream_data_added', (e: MessageEvent) => {
+    this.eventSource.addEventListener('hsp_state_changed', (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
-        // data might contain the points the server received
-        const points = data?.points ?? data?.data ?? (Array.isArray(data) ? data : null)
-        if (points && Array.isArray(points)) {
-          for (const p of points) {
-            const x = p.x ?? p.position
-            if (x !== undefined && lastServerX >= 0 && Math.abs(x - lastServerX) > 30) {
-              console.warn(`SSE SERVER JUMP: x ${lastServerX} → ${x} (Δ${Math.abs(x - lastServerX)})`, data)
-            }
-            if (x !== undefined) lastServerX = x
-          }
-        }
+        console.log('SSE [hsp_state_changed]', data)
       } catch {}
     })
 
@@ -381,41 +296,39 @@ export class HandyDriver {
       // 1. Sync clocks
       this.clientServerTimeOffset = await this.getClientServerTimeOffset()
 
-      // 2. Clean up local state (timers, SSE) but DON'T send stream/stop —
-      // that causes the device to physically reset position, creating a slam.
-      // stream/setup with the new stream implicitly switches the device.
+      // 2. Clean up local state
       this.stopPushTimer()
       if (this.eventSource) {
         this.eventSource.close()
         this.eventSource = null
       }
-      // Close old server-side stream (doesn't affect device position)
-      await this.closeStream()
+
+      // Stop any existing HSP playback
+      if (this.streamId !== null) {
+        await this.hspRequest('hsp/stop', 'PUT', undefined, true)
+        await this.hspRequest('hsp/flush', 'PUT', undefined, true)
+      }
 
       // 3. Reset state
       this.startTime = 0
       this.lastPointX = -1
       this.playbackStarted = false
-      this.pendingPoints = []
-      this.pushCount = 0
-      this.lastPushedX = -1
+      this.streamPoints = []
+      this.tailPointStreamIndex = 0
+      this.isPushing = false
+      this.pointsAccumulated = 0
 
-      // 4. Create a new stream and pre-load it with anchor data
-      const stream = await this.createStream()
-      if (!stream) {
-        this.errorMessage = 'Failed to create stream.'
-        this.notifyStatusChange()
-        return
-      }
-      this.streamInfo = stream
+      // 4. Setup SSE
+      this.setupSSE()
 
-      // 5. Setup device — implicitly stops any previous stream playback
-      const setupResp = await this.deviceRequest('stream/setup', 'PUT', {
-        stream_ref: stream.stream_ref,
+      // 5. Setup HSP stream on device
+      const streamId = Math.floor(Math.random() * 2147483647)
+      const setupResp = await this.hspRequest('hsp/setup', 'PUT', {
+        stream_id: streamId,
       })
       if (!setupResp.ok) {
         const err = setupResp.error
-        this.errorMessage = 'Failed to setup stream on device.'
+        this.errorMessage = 'Failed to setup HSP stream on device.'
         if (err?.code === 1001) {
           this.errorMessage +=
             ' Make sure it is updated to FW4, is online, and the connection key is correct.'
@@ -423,35 +336,34 @@ export class HandyDriver {
         this.notifyStatusChange()
         return
       }
+      this.streamId = streamId
 
-      // 6. DON'T start playback yet — wait for first real input so the
-      // anchor matches the actual input position (no slam from mismatch).
-      // Playback is started in flushPoints() when the first data arrives.
-      this.setupStreamSSE()
+      // 6. Start push timer - playback starts when first input arrives
       this.startPushTimer()
 
       this.connected = true
       this.errorMessage = null
-      console.log('Stream ready, waiting for first input to start playback')
+      console.log('HSP stream ready, waiting for first input to start playback')
     } catch (e) {
       this.errorMessage =
         'Something went wrong: ' + (e instanceof Error ? e.message : String(e))
-      this.cleanup()
+      await this.cleanup()
     }
 
     this.notifyStatusChange()
   }
 
-  // Start playback once we have some data in the stream
   private async startPlayback() {
     const now = Date.now()
-    const resp = await this.deviceRequest('stream/play', 'PUT', {
-      start_time: 0,
-      server_time: now + this.clientServerTimeOffset,
+    const resp = await this.hspRequest('hsp/play', 'PUT', {
+      startTime: 0,
+      serverTime: now + this.clientServerTimeOffset,
+      playbackRate: 1.0,
+      loop: false,
     })
 
     if (!resp.ok) {
-      this.errorMessage = 'Failed to start playback. Try again.'
+      this.errorMessage = 'Failed to start HSP playback. Try again.'
       this.notifyStatusChange()
     }
   }
@@ -465,15 +377,19 @@ export class HandyDriver {
     }
 
     // Stop playback on device
-    try {
-      await this.deviceRequest('stream/stop', 'PUT')
-    } catch {
-      // ignore
+    if (this.streamId !== null) {
+      try {
+        await this.hspRequest('hsp/stop', 'PUT')
+      } catch {
+        // ignore
+      }
+      try {
+        await this.hspRequest('hsp/flush', 'PUT')
+      } catch {
+        // ignore
+      }
     }
-
-    // Close the stream
-    await this.closeStream()
-    this.streamInfo = null
+    this.streamId = null
   }
 
   async stop() {
@@ -489,7 +405,6 @@ export class HandyDriver {
     this.notifyStatusChange()
   }
 
-  private playbackStarted = false
   private _testPatternRunning = false
   private _testPatternTimer: ReturnType<typeof setInterval> | null = null
 
@@ -509,46 +424,63 @@ export class HandyDriver {
 
   inputPosition(position: number) {
     if (!this.connected || this._testPatternRunning || this._diagnosticRunning) return
+
     this.onPoint({ position, duration: 0 })
+
+    // After accumulating 3+ points, do initial push + start playback
+    if (!this.playbackStarted && this.pointsAccumulated >= 3) {
+      this.playbackStarted = true
+      this.pushToDevice().then(() => this.startPlayback())
+      console.log('HSP playback starting after initial points accumulated')
+    }
   }
 
+  get statusText(): string {
+    if (this.connected) return `Connected to [${this.connectionKey}] (HSP)`
+    return 'Not connected'
+  }
+
+  destroy() {
+    this.stop()
+    this.processor.removeOutput(this.outputHandler)
+  }
+
+  // --- Test Pattern ---
+
   // Runs a triangle wave test pattern on the device.
-  // Bypasses OutputProcessor and dead zone — pushes clean points directly to stream.
-  // onPoint is called with each target position (0-1) for graph display.
+  // Bypasses OutputProcessor and dead zone -- pre-generates points, pushes to
+  // device buffer, then plays back.
   async runTestPattern(onPoint?: (position: number) => void): Promise<void> {
     if (!this.connected || this._testPatternRunning || this._diagnosticRunning) return
 
     this._testPatternRunning = true
     this.notifyStatusChange()
 
-    // Reset for test pattern — create a fresh stream
+    // Reset HSP for test pattern
     await this.cleanup()
 
     this.startTime = 0
     this.lastPointX = -1
     this.playbackStarted = false
+    this.streamPoints = []
+    this.tailPointStreamIndex = 0
+    this.pointsAccumulated = 0
 
-    const stream = await this.createStream()
-    if (!stream) {
-      this.errorMessage = 'Failed to create stream for test pattern.'
-      this._testPatternRunning = false
-      this.notifyStatusChange()
-      return
-    }
-    this.streamInfo = stream
-
-    const setupResp = await this.deviceRequest('stream/setup', 'PUT', {
-      stream_ref: stream.stream_ref,
+    // Setup SSE and new HSP stream
+    this.setupSSE()
+    const streamId = Math.floor(Math.random() * 2147483647)
+    const setupResp = await this.hspRequest('hsp/setup', 'PUT', {
+      stream_id: streamId,
     })
     if (!setupResp.ok) {
-      this.errorMessage = 'Failed to setup test pattern.'
+      this.errorMessage = 'Failed to setup HSP stream for test pattern.'
       this._testPatternRunning = false
       this.notifyStatusChange()
       return
     }
+    this.streamId = streamId
 
     // Generate test pattern: short bounces at bottom, middle, then top
-    // Uses sparse keypoints — device interpolates between them
     const bounceAmp = 15
     const bounceDuration = 400 // ms per up-down
     const transitionMs = 600 // ms to glide between levels
@@ -564,7 +496,7 @@ export class HandyDriver {
     for (let li = 0; li < levels.length; li++) {
       const center = levels[li]
 
-      // Transition: single keypoint at destination — device glides there
+      // Transition: single keypoint at destination -- device glides there
       if (li > 0) {
         t += transitionMs
         addPoint(center - bounceAmp)
@@ -582,19 +514,28 @@ export class HandyDriver {
 
     const durationMs = t
 
-    // Hold at final position so the device doesn't drift when stream runs dry
+    // Hold at final position so the device doesn't drift when buffer runs dry
     const lastX = testPoints[testPoints.length - 1].x
     testPoints.push({ t: t + 30000 + this.millisecondsOffset, x: lastX })
 
-    // Push all points to stream
-    await this.pushPoints(testPoints)
+    // Push all points to device buffer in batches
+    for (let i = 0; i < testPoints.length; i += BATCH_SIZE) {
+      const batch = testPoints.slice(i, i + BATCH_SIZE)
+      await this.hspRequest('hsp/add', 'PUT', {
+        points: batch,
+        flush: false,
+        tail_point_stream_index: i,
+      }, true)
+    }
 
     // Start playback
     this.startTime = Date.now()
     const now = Date.now()
-    const resp = await this.deviceRequest('stream/play', 'PUT', {
-      start_time: 0,
-      server_time: now + this.clientServerTimeOffset,
+    const resp = await this.hspRequest('hsp/play', 'PUT', {
+      startTime: 0,
+      serverTime: now + this.clientServerTimeOffset,
+      playbackRate: 1.0,
+      loop: false,
     })
     if (!resp.ok) {
       this.errorMessage = 'Failed to start test pattern playback.'
@@ -736,8 +677,8 @@ export class HandyDriver {
   }
 
   // Live diagnostic: feeds pattern through the real input pipeline
-  // (onPoint → pendingPoints → flushPoints → push) while polling device position.
-  // Requires an active connection — uses the existing stream, no re-setup.
+  // (onPoint -> streamPoints -> pushToDevice) while polling device position.
+  // Requires an active connection -- uses the existing HSP stream, no re-setup.
   async runDiagnostic(
     config: Partial<DiagnosticConfig> = {},
     onSentPoint?: (position: number) => void,
@@ -770,12 +711,24 @@ export class HandyDriver {
     const actualPoints: { t: number; x: number }[] = []
     const diagnosticStart = Date.now()
 
+    // Pre-feed a few points and start playback before entering the timed loops.
+    // Without this, pushToDevice sends data but the device never plays it.
+    for (let i = 0; i < 5; i++) {
+      const t = i * 30
+      const x = this.interpolatePattern(keypoints, t)
+      if (x !== null) this.onPoint({ position: x / 100, duration: 0 })
+    }
+    await this.pushToDevice()
+    this.startTime = Date.now()
+    await this.startPlayback()
+    console.log('HSP diagnostic: playback started')
+
     return new Promise<DiagnosticResult | null>((resolve) => {
       this._diagnosticResolve = resolve
 
       // Feed interpolated pattern through the live input path every ~30ms.
-      // This simulates continuous input (like a user moving a slider) going
-      // through onPoint → dead zone → pendingPoints → flushPoints → pushPoints.
+      // This simulates continuous input going through
+      // onPoint -> dead zone -> streamPoints -> pushToDevice.
       this._diagnosticSendTimer = setInterval(() => {
         if (!this._diagnosticRunning) return
         const elapsed = Date.now() - diagnosticStart
@@ -813,7 +766,7 @@ export class HandyDriver {
           if (this._diagnosticRunning) this.startPushTimer()
           pollInFlight = false
         }
-      }, 200) // Poll every 200ms — gives ~90 readings over 18s
+      }, 200) // Poll every 200ms -- gives ~90 readings over 18s
 
       // End after duration + buffer
       this._diagnosticTimer = setTimeout(() => {
@@ -920,15 +873,5 @@ export class HandyDriver {
       dataPoints,
       config,
     }
-  }
-
-  get statusText(): string {
-    if (this.connected) return `Connected to [${this.connectionKey}]`
-    return 'Not connected'
-  }
-
-  destroy() {
-    this.stop()
-    this.processor.removeOutput(this.outputHandler)
   }
 }

@@ -14,8 +14,16 @@ export function useMotionGraph() {
   let animFrame = 0
   let startTime = Date.now()
 
+  const MAX_POINTS = 600 // ~60 points/sec for 10s window is plenty for visual fidelity
+  const MIN_INTERVAL_MS = 16 // ~60Hz max input rate
+  let lastInputTime = 0
+  let lastOutputTime = 0
+
   function addInputPoint(value: number) {
     const now = Date.now() - startTime
+    // Throttle: skip points that arrive faster than MIN_INTERVAL_MS
+    if (now - lastInputTime < MIN_INTERVAL_MS) return
+    lastInputTime = now
     inputPoints.push({ time: now, value })
     // Prune old points
     const cutoff = now - windowMs - 2000
@@ -26,6 +34,8 @@ export function useMotionGraph() {
 
   function addOutputPoint(value: number) {
     const now = Date.now() - startTime
+    if (now - lastOutputTime < MIN_INTERVAL_MS) return
+    lastOutputTime = now
     outputPoints.push({ time: now, value })
     const cutoff = now - windowMs - 2000
     while (outputPoints.length > 0 && outputPoints[0].time < cutoff) {

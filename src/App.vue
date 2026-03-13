@@ -12,6 +12,15 @@ function onPosition(value: number) {
 
 function onTestPatternPoint(position: number) {
   inputPanelRef.value?.addOutputPoint(position)
+  inputPanelRef.value?.setSliderPosition(position)
+}
+
+function onDiagnosticSentPoint(position: number) {
+  inputPanelRef.value?.addInputPoint(position)
+}
+
+function onDiagnosticActualPoint(position: number) {
+  inputPanelRef.value?.addOutputPoint(position)
 }
 </script>
 
@@ -25,7 +34,12 @@ function onTestPatternPoint(position: number) {
         <InputPanel ref="inputPanelRef" @position="onPosition" />
       </div>
       <div class="panel-column">
-        <OutputPanel ref="outputPanelRef" @test-pattern-point="onTestPatternPoint" />
+        <OutputPanel
+          ref="outputPanelRef"
+          @test-pattern-point="onTestPatternPoint"
+          @diagnostic-sent-point="onDiagnosticSentPoint"
+          @diagnostic-actual-point="onDiagnosticActualPoint"
+        />
       </div>
     </main>
   </div>
