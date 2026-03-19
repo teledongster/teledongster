@@ -11,10 +11,16 @@ importers:
       '@vueuse/core':
         specifier: ^14.2.1
         version: 14.2.1(vue@3.5.30(typescript@5.9.3))
+      file-saver:
+        specifier: ^2.0.5
+        version: 2.0.5
       vue:
         specifier: ^3.5.13
         version: 3.5.30(typescript@5.9.3)
     devDependencies:
+      '@types/file-saver':
+        specifier: ^2.0.7
+        version: 2.0.7
       '@types/w3c-web-usb':
         specifier: ^1.0.13
         version: 1.0.13
@@ -343,6 +349,9 @@ packages:
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
+  '@types/file-saver@2.0.7':
+    resolution: {integrity: sha512-dNKVfHd/jk0SkR/exKGj2ggkB45MAkzvWCaqLUUgkyjITkGNzH8H+yUwr+BLJUBjZOe9w8X3wgmXhZDRg1ED6A==}
+
   '@types/w3c-web-usb@1.0.13':
     resolution: {integrity: sha512-N2nSl3Xsx8mRHZBvMSdNGtzMyeleTvtlEw+ujujgXalPqOjIA6UtrqcB6OzyUjkTbDm3J7P1RNK1lgoO7jxtsw==}
 
@@ -459,6 +468,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  file-saver@2.0.5:
+    resolution: {integrity: sha512-P9bmyZ3h/PRG+Nzga+rbdI4OEpNDzAVyy74uVO9ATgzLK6VtAsYybF/+TOCvrc0MO793d6+42lLyZTw7/ArVzA==}
 
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
@@ -747,6 +759,8 @@ snapshots:
 
   '@types/estree@1.0.8': {}
 
+  '@types/file-saver@2.0.7': {}
+
   '@types/w3c-web-usb@1.0.13': {}
 
   '@types/web-bluetooth@0.0.21': {}
@@ -906,6 +920,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.3):
     optionalDependencies:
       picomatch: 4.0.3
+
+  file-saver@2.0.5: {}
 
   fsevents@2.3.3:
     optional: true

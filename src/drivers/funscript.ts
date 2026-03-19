@@ -1,6 +1,7 @@
 // Funscript recorder driver
 // Port of FunscriptRecorder.cs
 
+import { saveAs } from 'file-saver'
 import { OutputProcessor, type OutputCallback } from './output-processor'
 
 interface FunscriptPoint {
@@ -82,16 +83,11 @@ export class FunscriptDriver {
       actions,
     }
 
-    const blob = new Blob([JSON.stringify(funscript)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
+    const json = JSON.stringify(funscript, null, 2)
     const now = new Date()
-    a.download = `teledong_${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}.funscript`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+    const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`
+    const blob = new Blob([json], { type: 'application/json' })
+    saveAs(blob, `teledong_${ts}.funscript`)
   }
 
   inputPosition(position: number) {

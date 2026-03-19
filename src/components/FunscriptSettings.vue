@@ -44,6 +44,8 @@ function stopRecording() {
 function download() {
   props.driver.download()
 }
+
+
 </script>
 
 <template>

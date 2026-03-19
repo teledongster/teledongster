@@ -1,7 +1,5 @@
 import { ref, shallowReactive } from 'vue'
 import { HandyDriver } from '../drivers/handy'
-import { HandyHspDriver } from '../drivers/handy-hsp'
-import { HandyHdspDriver } from '../drivers/handy-hdsp'
 import { FunscriptDriver } from '../drivers/funscript'
 
 export type OutputDeviceType = 'handy' | 'funscript'
@@ -9,7 +7,7 @@ export type OutputDeviceType = 'handy' | 'funscript'
 export interface OutputDeviceEntry {
   id: number
   type: OutputDeviceType
-  driver: HandyDriver | HandyHspDriver | HandyHdspDriver | FunscriptDriver
+  driver: HandyDriver | FunscriptDriver
 }
 
 let nextId = 1
@@ -19,7 +17,7 @@ export function useOutputDevices() {
   const selectedDeviceId = ref<number | null>(null)
 
   function addDevice(type: OutputDeviceType): OutputDeviceEntry {
-    let driver: HandyDriver | HandyHspDriver | HandyHdspDriver | FunscriptDriver
+    let driver: HandyDriver | FunscriptDriver
     if (type === 'handy') {
       driver = new HandyDriver()
     } else {

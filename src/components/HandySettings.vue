@@ -1,27 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { HandyDriver } from '../drivers/handy'
-import { HandyHspDriver } from '../drivers/handy-hsp'
-import { HandyHdspDriver } from '../drivers/handy-hdsp'
 import type { DiagnosticResult } from '../drivers/handy'
 
 const props = defineProps<{
-  driver: HandyDriver | HandyHspDriver | HandyHdspDriver
+  driver: HandyDriver
 }>()
 
 const emit = defineEmits<{
   save: []
-  'swap-protocol': [protocol: 'stream' | 'hsp' | 'hdsp']
   'test-pattern-point': [position: number]
   'diagnostic-sent-point': [position: number]
   'diagnostic-actual-point': [position: number]
 }>()
-
-const protocol = computed(() => {
-  if (props.driver instanceof HandyHdspDriver) return 'hdsp'
-  if (props.driver instanceof HandyHspDriver) return 'hsp'
-  return 'stream'
-})
 
 const connectionKey = ref(props.driver.connectionKey)
 const statusText = ref(props.driver.statusText)
@@ -49,7 +40,7 @@ function subscribeDriver() {
 onMounted(() => subscribeDriver())
 onUnmounted(() => unsubscribe?.())
 
-// Re-subscribe when driver changes (protocol swap)
+// Re-subscribe when driver changes
 watch(() => props.driver, () => {
   subscribeDriver()
 })
@@ -58,14 +49,6 @@ watch(connectionKey, (key) => {
   props.driver.connectionKey = key
   emit('save')
 })
-
-function switchProtocol(newProtocol: 'stream' | 'hsp' | 'hdsp') {
-  if (newProtocol === protocol.value) return
-  if (props.driver.connected) {
-    props.driver.stop()
-  }
-  emit('swap-protocol', newProtocol)
-}
 
 async function connect() {
   props.driver.connectionKey = connectionKey.value
@@ -111,29 +94,6 @@ function stopDiagnostic() {
 
 <template>
   <div>
-    <div class="field-group">
-      <label>Protocol</label>
-      <div class="row" style="margin-bottom: 4px">
-        <button
-          :class="{ secondary: protocol !== 'stream' }"
-          class="small"
-          @click="switchProtocol('stream')"
-          :disabled="driver.connected"
-        >STREAM</button>
-        <button
-          :class="{ secondary: protocol !== 'hsp' }"
-          class="small"
-          @click="switchProtocol('hsp')"
-          :disabled="driver.connected"
-        >HSP</button>
-        <button
-          :class="{ secondary: protocol !== 'hdsp' }"
-          class="small"
-          @click="switchProtocol('hdsp')"
-          :disabled="driver.connected"
-        >HDSP</button>
-      </div>
-    </div>
     <div class="field-group">
       <label>Connection Key</label>
       <input v-model="connectionKey" type="text" placeholder="Enter Handy connection key" />

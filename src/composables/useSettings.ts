@@ -2,7 +2,6 @@ import { useLocalStorage } from '@vueuse/core'
 
 export interface SavedOutputDevice {
   type: 'handy' | 'funscript'
-  handyProtocol?: 'stream' | 'hsp' | 'hdsp'
   connectionKey?: string
   peakMotionMode?: boolean
   filterTimeMs?: number

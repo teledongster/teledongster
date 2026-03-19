@@ -11,11 +11,7 @@ import {
 } from '../composables/useOutputDevices'
 import { settings, type SavedOutputDevice } from '../composables/useSettings'
 import { HandyDriver } from '../drivers/handy'
-import { HandyHspDriver } from '../drivers/handy-hsp'
-import { HandyHdspDriver } from '../drivers/handy-hdsp'
 import type { FunscriptDriver } from '../drivers/funscript'
-
-type HandyAnyDriver = HandyDriver | HandyHspDriver | HandyHdspDriver
 
 const outputDevices = useOutputDevices()
 const showAdvanced = ref(false)
@@ -27,16 +23,14 @@ function persistToSettings() {
   settings.value.outputDevices = outputDevices.devices.map((d) => {
     const saved: SavedOutputDevice = {
       type: d.type,
-      peakMotionMode: d.driver.processor.peakMotionMode,
-      filterTimeMs: d.driver.processor.filterTimeMs,
-      filterStrength: d.driver.processor.filterStrength,
     }
     if (d.type === 'handy') {
-      const hDriver = d.driver as HandyAnyDriver
-      saved.connectionKey = hDriver.connectionKey
-      saved.handyProtocol = d.driver instanceof HandyHdspDriver ? 'hdsp'
-        : d.driver instanceof HandyHspDriver ? 'hsp'
-        : 'stream'
+      saved.connectionKey = (d.driver as HandyDriver).connectionKey
+    }
+    if (d.type === 'funscript') {
+      saved.peakMotionMode = d.driver.processor.peakMotionMode
+      saved.filterTimeMs = d.driver.processor.filterTimeMs
+      saved.filterStrength = d.driver.processor.filterStrength
     }
     return saved
   })
@@ -45,18 +39,15 @@ function persistToSettings() {
 function restoreFromSettings() {
   for (const sd of settings.value.outputDevices) {
     const entry = outputDevices.addDevice(sd.type as OutputDeviceType)
-    if (sd.peakMotionMode !== undefined) entry.driver.processor.peakMotionMode = sd.peakMotionMode
-    if (sd.filterTimeMs !== undefined) entry.driver.processor.filterTimeMs = sd.filterTimeMs
-    if (sd.filterStrength !== undefined) entry.driver.processor.filterStrength = sd.filterStrength
     if (entry.type === 'handy') {
-      // Set connectionKey before swap so it gets copied to the new driver
       if (sd.connectionKey) {
-        ;(entry.driver as HandyAnyDriver).connectionKey = sd.connectionKey
+        ;(entry.driver as HandyDriver).connectionKey = sd.connectionKey
       }
-      // Swap to non-default protocol if needed
-      if (sd.handyProtocol === 'hsp' || sd.handyProtocol === 'hdsp') {
-        swapHandyProtocol(entry, sd.handyProtocol)
-      }
+    }
+    if (entry.type === 'funscript') {
+      if (sd.peakMotionMode !== undefined) entry.driver.processor.peakMotionMode = sd.peakMotionMode
+      if (sd.filterTimeMs !== undefined) entry.driver.processor.filterTimeMs = sd.filterTimeMs
+      if (sd.filterStrength !== undefined) entry.driver.processor.filterStrength = sd.filterStrength
     }
   }
 }
@@ -66,39 +57,6 @@ onMounted(() => {
     restoreFromSettings()
   }
 })
-
-// --- Protocol swap ---
-
-function swapHandyProtocol(device: OutputDeviceEntry, protocol: 'stream' | 'hsp' | 'hdsp') {
-  const oldDriver = device.driver as HandyAnyDriver
-  const connectionKey = oldDriver.connectionKey
-  const filterTimeMs = oldDriver.processor.filterTimeMs
-
-  // Stop old driver
-  oldDriver.destroy()
-
-  // Create new driver of the desired protocol
-  const newDriver = protocol === 'hdsp' ? new HandyHdspDriver()
-    : protocol === 'hsp' ? new HandyHspDriver()
-    : new HandyDriver()
-  newDriver.connectionKey = connectionKey
-  newDriver.processor.filterTimeMs = filterTimeMs
-  newDriver.processor.skipFiltering = true
-  newDriver.processor.peakMotionMode = false
-
-  // Replace the entry in the array to trigger shallowReactive reactivity
-  const idx = outputDevices.devices.indexOf(device)
-  if (idx >= 0) {
-    outputDevices.devices.splice(idx, 1, { ...device, driver: newDriver })
-  }
-  persistToSettings()
-}
-
-function onSwapProtocol(protocol: 'stream' | 'hsp' | 'hdsp') {
-  const device = selectedDevice.value
-  if (!device || device.type !== 'handy') return
-  swapHandyProtocol(device, protocol)
-}
 
 // --- Actions ---
 
@@ -157,9 +115,8 @@ defineExpose({
       <div class="selected-device-settings">
         <HandySettings
           v-if="selectedDevice.type === 'handy'"
-          :driver="(selectedDevice.driver as HandyAnyDriver)"
+          :driver="(selectedDevice.driver as HandyDriver)"
           @save="persistToSettings"
-          @swap-protocol="onSwapProtocol"
           @test-pattern-point="(pos: number) => emit('test-pattern-point', pos)"
           @diagnostic-sent-point="(pos: number) => emit('diagnostic-sent-point', pos)"
           @diagnostic-actual-point="(pos: number) => emit('diagnostic-actual-point', pos)"
@@ -169,17 +126,19 @@ defineExpose({
           :driver="(selectedDevice.driver as FunscriptDriver)"
         />
 
-        <div style="margin-top: 8px">
-          <button class="small secondary" @click="showAdvanced = !showAdvanced">
-            {{ showAdvanced ? 'Hide' : 'Show' }} Advanced Settings
-          </button>
-        </div>
+        <template v-if="selectedDevice.type !== 'handy'">
+          <div style="margin-top: 8px">
+            <button class="small secondary" @click="showAdvanced = !showAdvanced">
+              {{ showAdvanced ? 'Hide' : 'Show' }} Advanced Settings
+            </button>
+          </div>
 
-        <AdvancedOutputSettings
-          v-if="showAdvanced"
-          :device="selectedDevice"
-          @save="persistToSettings"
-        />
+          <AdvancedOutputSettings
+            v-if="showAdvanced"
+            :device="selectedDevice"
+            @save="persistToSettings"
+          />
+        </template>
       </div>
     </template>
   </div>

@@ -1,28 +1,12 @@
-// Handy output driver - STREAM protocol
-// Creates a server-side stream, pushes points to it, and lets the server
-// handle feeding data to the device. No manual buffer management needed.
+// Handy output driver - HDSP (Handy Direct Streaming Protocol)
+// Fire-and-forget direct position commands. No buffering on device.
+// Recommended by Lars for live sensor data: "just play a few points and forget about them."
+//
+// Uses PUT hdsp/xat: absolute position (mm) + time (ms to get there).
+// Device plays points immediately on receipt, doesn't wait for current movement to finish.
+// 5-10 commands/sec is fine; server-side throttling handles rate limiting.
 
 import { OutputProcessor, type OutputCallback } from './output-processor'
-
-const STREAM_API_URL = 'https://www.handyfeeling.com/api/stream/v0'
-const DEVICE_API_URL = 'https://www.handyfeeling.com/api/handy-rest/v3-next'
-const APP_ID = 'Bl4tZ-SEEDFxQMy1.2~GJdv2dAZp3OjW'
-const APP_KEY = 'TURGTFMwbzBXVXBYUkZnM01qSlVORlJEVFRCS1VEYzBVMGMjdXh2UFdhUFB6cWRSN25GcHBqeDVvVWhjRG1pbWRfRlZIcG1UaUJwQzh1Zw'
-
-const POSITION_DEAD_ZONE = 1 // minimum change in 0-100 to count as real movement
-const PUSH_INTERVAL_MS = 50 // batch and push points every 50ms
-
-interface StreamInfo {
-  stream_id: number
-  stream_ref: string
-  subscriber_key: string
-  editor_key: string
-}
-
-interface StreamPoint {
-  t: number // ms from start
-  x: number // 0-100
-}
 
 export interface DiagnosticConfig {
   pattern: 'bounce' | 'ramp' | 'step' | 'sine' | 'triangle'
@@ -47,10 +31,17 @@ export interface DiagnosticResult {
   config: DiagnosticConfig
 }
 
+const API_URL = 'https://www.handyfeeling.com/api/handy-rest/v3/'
+const DEVICE_API_URL = 'https://www.handyfeeling.com/api/handy-rest/v3-next'
+const APP_ID = 'Bl4tZ-SEEDFxQMy1.2~GJdv2dAZp3OjW'
+
+const SEND_INTERVAL_MS = 100 // ~10 commands/sec
+const POSITION_DEAD_ZONE = 1 // minimum change to send
+
 interface SliderState {
-  position: number        // 0-1 (can be slightly negative)
+  position: number // 0-1
   position_absolute: number // mm
-  speed_absolute: number  // mm/s
+  speed_absolute: number // mm/s
   dir: boolean
   motor_temp: number
 }
@@ -64,22 +55,13 @@ export class HandyDriver {
   private outputHandler: OutputCallback
   private statusListeners: Array<() => void> = []
 
-  // Stream state
-  private streamInfo: StreamInfo | null = null
-  private clientToken: string | null = null
-  private startTime = 0
-  private clientServerTimeOffset = 0
-  private lastPointX = -1
-  private eventSource: EventSource | null = null
-  private pendingPoints: Array<{ timestamp: number; x: number }> = []
-  private pushTimer: ReturnType<typeof setInterval> | null = null
-  private _flushing = false
-  private _lastKeepaliveTime = 0
-
-  // Derived from processor filterTime — acts as the buffer-ahead window
-  private get millisecondsOffset(): number {
-    return this.processor.filterTimeMs
-  }
+  private sendTimer: ReturnType<typeof setInterval> | null = null
+  private currentX = -1 // latest target position 0-100
+  private lastSentX = -1
+  private isSending = false
+  private sendCount = 0
+  private lastInputTime = 0
+  private movementStopped = false
 
   onStatusChange(listener: () => void): () => void {
     this.statusListeners.push(listener)
@@ -97,174 +79,56 @@ export class HandyDriver {
     this.processor = new OutputProcessor()
     this.processor.skipFiltering = true
     this.processor.peakMotionMode = false
-    this.processor.filterTimeMs = 600
+    this.processor.filterTimeMs = 0 // no offset needed for HDSP
     this.outputHandler = (e) => this.onPoint(e)
     this.processor.onOutput(this.outputHandler)
   }
 
-  // Called synchronously from OutputProcessor — push point to stream.
-  // Dead zone filters remaining noise after input-level smoothing.
   private onPoint(e: { position: number; duration: number }) {
-    if (!this.connected || !this.streamInfo) return
-
+    if (!this.connected) return
     const x = Math.max(0, Math.min(100, Math.round(e.position * 100)))
-
-    // Dead zone: ignore changes smaller than threshold
-    if (this.lastPointX >= 0 && Math.abs(x - this.lastPointX) < POSITION_DEAD_ZONE) return
-    this.lastPointX = x
-
-    // Store raw timestamp — t is computed at flush time relative to startTime
-    this.pendingPoints.push({ timestamp: Date.now(), x })
-  }
-
-  // Flush any pending points to the stream.
-  // Serialized: if a push is in-flight, skip this tick. Points stay in pendingPoints
-  // with their original timestamps so the next flush picks them up fresh.
-  private async flushPoints() {
-    if (this._flushing) return
-    this._flushing = true
-
-    try {
-      // Grab batch atomically (synchronous swap before any awaits)
-      const raw = this.pendingPoints
-      this.pendingPoints = []
-
-      if (!this.playbackStarted) {
-        if (raw.length === 0) return // no input yet, don't start playback
-        // Set synchronously to prevent concurrent startup
-        this.playbackStarted = true
-        this.startTime = Date.now()
-        const anchorX = raw[0].x
-        await this.pushPoints([{ t: 0, x: anchorX }])
-        await this.startPlayback()
-        console.log(`Playback started at x=${anchorX}`)
-      }
-
-      if (raw.length > 0) {
-        // Convert raw timestamps to stream-relative t values
-        const points: StreamPoint[] = raw.map(p => ({
-          t: Math.round(p.timestamp - this.startTime) + this.millisecondsOffset,
-          x: p.x,
-        }))
-        await this.pushPoints(points)
-      } else if (Date.now() - this._lastKeepaliveTime > 1000) {
-        // Keepalive every ~1s: hold current position so the stream never runs dry
-        const t = Math.round(Date.now() - this.startTime) + this.millisecondsOffset
-        this._lastKeepaliveTime = Date.now()
-        await this.pushPoints([{ t, x: this.lastPointX }])
-      }
-    } finally {
-      this._flushing = false
+    this.lastInputTime = Date.now()
+    // Only resume movement if position changed beyond dead zone
+    if (this.movementStopped && this.lastSentX >= 0 && Math.abs(x - this.lastSentX) < POSITION_DEAD_ZONE) {
+      return // still within dead zone, stay stopped
     }
+    this.currentX = x
+    this.movementStopped = false
   }
 
-  private startPushTimer() {
-    this.stopPushTimer()
-    this.pushTimer = setInterval(() => this.flushPoints(), PUSH_INTERVAL_MS)
-  }
-
-  private stopPushTimer() {
-    if (this.pushTimer != null) {
-      clearInterval(this.pushTimer)
-      this.pushTimer = null
+  // v3 API request
+  private async apiRequest(
+    endpoint: string,
+    method: 'GET' | 'PUT',
+    body?: any,
+    quiet = false,
+  ): Promise<{ ok: boolean; result?: any; error?: any }> {
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      'X-Connection-Key': this.connectionKey,
+      'X-Api-Key': APP_ID,
     }
-  }
-
-  // Push points to the stream data endpoint
-  private pushCount = 0
-  private lastPushedX = -1
-  private async pushPoints(points: StreamPoint[]) {
-    // Detect large position jumps that would cause a slam
-    for (const p of points) {
-      if (this.lastPushedX >= 0 && Math.abs(p.x - this.lastPushedX) > 30) {
-        console.warn(`⚠ LARGE JUMP: x ${this.lastPushedX} → ${p.x} (Δ${Math.abs(p.x - this.lastPushedX)}) at t=${p.t}, push #${this.pushCount}`)
-      }
-      this.lastPushedX = p.x
-    }
-    if (!this.streamInfo) return
-    try {
-      const resp = await fetch(`${STREAM_API_URL}/streams/${this.streamInfo.stream_id}/data`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Key': this.streamInfo.subscriber_key,
-        },
-        body: JSON.stringify(points),
-      })
-      this.pushCount++
-      if (!resp.ok) {
-        console.error(`Push #${this.pushCount} [${resp.status}] pts=${points.length} x=${points[0]?.x}-${points[points.length-1]?.x}`)
-      }
-    } catch (ex) {
-      console.error('Failed to push points to stream:', ex)
-    }
-  }
-
-  // Issue a client-token using the Application Key via the device API
-  private async issueClientToken(): Promise<string | null> {
-    try {
-      const resp = await fetch(`${DEVICE_API_URL}/auth/token/issue?ttl=3600`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${APP_KEY}` },
-      })
-      if (!resp.ok) {
-        console.error('Failed to issue client token:', resp.status, await resp.text())
-        return null
-      }
-      const data = await resp.json()
-      console.log('Client token issued')
-      return data.result?.token ?? null
-    } catch (ex) {
-      console.error('Failed to issue client token:', ex)
-      return null
-    }
-  }
-
-  // Create a new stream via the STREAM API (requires client-token)
-  private async createStream(): Promise<StreamInfo | null> {
-    if (!this.clientToken) {
-      this.clientToken = await this.issueClientToken()
-      if (!this.clientToken) return null
+    const options: RequestInit = { method, headers }
+    if (body !== undefined && method !== 'GET') {
+      headers['Content-Type'] = 'application/json'
+      options.body = JSON.stringify(body)
     }
 
     try {
-      const resp = await fetch(`${STREAM_API_URL}/streams`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.clientToken}`,
-        },
-        body: JSON.stringify({ name: 'teledong-live' }),
-      })
-      if (!resp.ok) {
-        console.error('Failed to create stream:', resp.status, await resp.text())
-        // Token may have expired — clear it so next attempt re-issues
-        if (resp.status === 401) this.clientToken = null
-        return null
+      const response = await fetch(`${API_URL}${endpoint}`, options)
+      const text = await response.text()
+      const data = text ? JSON.parse(text) : null
+      if (!quiet) console.log(`HDSP ${method} ${endpoint} -> ${response.status}`, data)
+      if (response.ok) {
+        return { ok: true, result: data?.result ?? data }
       }
-      const data = await resp.json()
-      console.log('Stream created:', data)
-      return data.result as StreamInfo
-    } catch (ex) {
-      console.error('Failed to create stream:', ex)
-      return null
+      return { ok: false, error: data?.error ?? data }
+    } catch (e) {
+      return { ok: false, error: e }
     }
   }
 
-  // Close the stream (no more data will be appended)
-  private async closeStream() {
-    if (!this.streamInfo) return
-    try {
-      await fetch(`${STREAM_API_URL}/streams/${this.streamInfo.stream_id}/close`, {
-        method: 'PUT',
-        headers: { 'X-Api-Key': this.streamInfo.editor_key },
-      })
-    } catch {
-      // ignore
-    }
-  }
-
-  // Device REST API request
+  // v3-next API request (for slider/state polling during diagnostic)
   private async deviceRequest(
     endpoint: string,
     method: 'GET' | 'PUT',
@@ -286,87 +150,13 @@ export class HandyDriver {
       const response = await fetch(`${DEVICE_API_URL}/${endpoint}`, options)
       const text = await response.text()
       const data = text ? JSON.parse(text) : null
-      if (!quiet) console.log(`Device ${method} ${endpoint} → ${response.status}`, data)
+      if (!quiet) console.log(`Device ${method} ${endpoint} -> ${response.status}`, data)
       if (response.ok) {
-        const result = data?.result ?? data
-        return { ok: true, result }
+        return { ok: true, result: data?.result ?? data }
       }
       return { ok: false, error: data?.error ?? data }
     } catch (e) {
       return { ok: false, error: e }
-    }
-  }
-
-  private async getClientServerTimeOffset(): Promise<number> {
-    const numSamples = 10
-    let timeoutCount = 5
-    let offsetTimeSum = 0
-
-    for (let i = 0; i < numSamples; i++) {
-      const t0 = performance.now()
-      const resp = await this.deviceRequest('servertime', 'GET')
-      const roundtripMs = performance.now() - t0
-
-      const serverTime = resp.result?.server_time
-      if (!serverTime || serverTime <= 0) {
-        if (timeoutCount-- <= 0) throw new Error('Failed to get servertime')
-        i--
-        continue
-      }
-
-      const clientTime = Date.now()
-      const estimatedServerReceiveTime = serverTime + roundtripMs / 2
-      offsetTimeSum += estimatedServerReceiveTime - clientTime
-    }
-
-    const offset = Math.round(offsetTimeSum / numSamples)
-    console.log('Client-server offset:', offset, 'ms')
-    return offset
-  }
-
-  private setupStreamSSE() {
-    if (!this.streamInfo) return
-
-    const url = `${STREAM_API_URL}/streams/${this.streamInfo.stream_id}/sse?apikey=${this.streamInfo.editor_key}`
-    this.eventSource = new EventSource(url)
-
-    const logEvent = (type: string, e: MessageEvent) => {
-      let parsed: any = null
-      try { parsed = JSON.parse(e.data) } catch {}
-      console.warn(`SSE [${type}]`, parsed ?? e.data)
-    }
-
-    this.eventSource.addEventListener('stream_consumer_started', (e: MessageEvent) => logEvent('consumer_started', e))
-    this.eventSource.addEventListener('stream_consumer_stopped', (e: MessageEvent) => logEvent('consumer_stopped', e))
-    this.eventSource.addEventListener('stream_end_reached', (e: MessageEvent) => logEvent('end_reached', e))
-    this.eventSource.addEventListener('stream_closed', (e: MessageEvent) => logEvent('closed', e))
-
-    // Monitor server-side data for unexpected jumps
-    let lastServerX = -1
-    this.eventSource.addEventListener('stream_data_added', (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data)
-        // data might contain the points the server received
-        const points = data?.points ?? data?.data ?? (Array.isArray(data) ? data : null)
-        if (points && Array.isArray(points)) {
-          for (const p of points) {
-            const x = p.x ?? p.position
-            if (x !== undefined && lastServerX >= 0 && Math.abs(x - lastServerX) > 30) {
-              console.warn(`SSE SERVER JUMP: x ${lastServerX} → ${x} (Δ${Math.abs(x - lastServerX)})`, data)
-            }
-            if (x !== undefined) lastServerX = x
-          }
-        }
-      } catch {}
-    })
-
-    this.eventSource.onmessage = (e) => {
-      if (e.type !== 'message') return
-      console.log('SSE [unknown]', e.data)
-    }
-
-    this.eventSource.onerror = () => {
-      console.warn('SSE connection error')
     }
   }
 
@@ -378,133 +168,125 @@ export class HandyDriver {
     }
 
     try {
-      // 1. Sync clocks
-      this.clientServerTimeOffset = await this.getClientServerTimeOffset()
-
-      // 2. Clean up local state (timers, SSE) but DON'T send stream/stop —
-      // that causes the device to physically reset position, creating a slam.
-      // stream/setup with the new stream implicitly switches the device.
-      this.stopPushTimer()
-      if (this.eventSource) {
-        this.eventSource.close()
-        this.eventSource = null
-      }
-      // Close old server-side stream (doesn't affect device position)
-      await this.closeStream()
-
-      // 3. Reset state
-      this.startTime = 0
-      this.lastPointX = -1
-      this.playbackStarted = false
-      this.pendingPoints = []
-      this.pushCount = 0
-      this.lastPushedX = -1
-
-      // 4. Create a new stream and pre-load it with anchor data
-      const stream = await this.createStream()
-      if (!stream) {
-        this.errorMessage = 'Failed to create stream.'
+      // Verify device is reachable by checking server time
+      const resp = await this.apiRequest('servertime', 'GET')
+      if (!resp.ok) {
+        this.errorMessage = 'Failed to reach Handy server. Check connection key.'
         this.notifyStatusChange()
         return
       }
-      this.streamInfo = stream
 
-      // 5. Setup device — implicitly stops any previous stream playback
-      const setupResp = await this.deviceRequest('stream/setup', 'PUT', {
-        stream_ref: stream.stream_ref,
+      // No setup needed for HDSP — fire-and-forget direct commands, no buffering.
+      // Verify device is reachable by sending a test command (move to 10% in 1s).
+      const testResp = await this.apiRequest('hdsp/xpt', 'PUT', {
+        xp: 0.1, // 0=bottom, 1=top — move near bottom on connect
+        t: 1000,
+        stop_on_target: true,
+        immediate_rsp: false, // wait for device response to confirm connectivity
       })
-      if (!setupResp.ok) {
-        const err = setupResp.error
-        this.errorMessage = 'Failed to setup stream on device.'
+      if (!testResp.ok) {
+        const err = testResp.error
+        this.errorMessage = 'Failed to send HDSP command to device.'
         if (err?.code === 1001) {
           this.errorMessage +=
             ' Make sure it is updated to FW4, is online, and the connection key is correct.'
         }
+        console.error('HDSP xat test failed:', testResp.error)
         this.notifyStatusChange()
         return
       }
+      console.log('HDSP test command successful:', testResp.result)
 
-      // 6. DON'T start playback yet — wait for first real input so the
-      // anchor matches the actual input position (no slam from mismatch).
-      // Playback is started in flushPoints() when the first data arrives.
-      this.setupStreamSSE()
-      this.startPushTimer()
+      this.currentX = -1
+      this.lastSentX = -1
+      this.isSending = false
+      this.startSendTimer()
 
       this.connected = true
       this.errorMessage = null
-      console.log('Stream ready, waiting for first input to start playback')
+      console.log('HDSP ready, sending commands at', SEND_INTERVAL_MS, 'ms interval')
     } catch (e) {
       this.errorMessage =
         'Something went wrong: ' + (e instanceof Error ? e.message : String(e))
-      this.cleanup()
     }
 
     this.notifyStatusChange()
   }
 
-  // Start playback once we have some data in the stream
-  private async startPlayback() {
-    const now = Date.now()
-    const resp = await this.deviceRequest('stream/play', 'PUT', {
-      start_time: 0,
-      server_time: now + this.clientServerTimeOffset,
-    })
+  private async sendCommand() {
+    if (!this.connected || this.currentX < 0) return
+    if (this.isSending) return // previous command still in flight
 
-    if (!resp.ok) {
-      this.errorMessage = 'Failed to start playback. Try again.'
-      this.notifyStatusChange()
+    // If no new input for 200ms, stop the device and go idle
+    if (this.lastInputTime > 0 && Date.now() - this.lastInputTime > 200) {
+      if (!this.movementStopped) {
+        this.movementStopped = true
+        await this.stopMovement()
+      }
+      return
+    }
+
+    // Dead zone: ignore small changes from sensor noise, but stop device
+    if (this.lastSentX >= 0 && Math.abs(this.currentX - this.lastSentX) < POSITION_DEAD_ZONE) {
+      if (!this.movementStopped) {
+        this.movementStopped = true
+        await this.stopMovement()
+      }
+      return
+    }
+
+    this.isSending = true
+    const x = this.currentX
+    this.lastSentX = x
+    this.sendCount++
+
+    try {
+      // Fire-and-forget: immediate_rsp means server returns without waiting for device
+      await this.apiRequest(
+        'hdsp/xpt',
+        'PUT',
+        {
+          xp: x / 100, // convert 0-100 internal to 0-1 API range
+          t: SEND_INTERVAL_MS,
+          stop_on_target: false,
+          immediate_rsp: true,
+        },
+        true,
+      )
+    } finally {
+      this.isSending = false
     }
   }
 
-  private async cleanup() {
-    this.stopPushTimer()
+  private startSendTimer() {
+    this.stopSendTimer()
+    this.sendTimer = setInterval(() => this.sendCommand(), SEND_INTERVAL_MS)
+  }
 
-    if (this.eventSource) {
-      this.eventSource.close()
-      this.eventSource = null
+  private stopSendTimer() {
+    if (this.sendTimer != null) {
+      clearInterval(this.sendTimer)
+      this.sendTimer = null
     }
+  }
 
-    // Stop playback on device
-    try {
-      await this.deviceRequest('stream/stop', 'PUT')
-    } catch {
-      // ignore
-    }
-
-    // Close the stream
-    await this.closeStream()
-    this.streamInfo = null
+  // Send current position with stop_on_target to halt the device
+  private async stopMovement() {
+    if (this.lastSentX < 0) return
+    await this.apiRequest('hdsp/xpt', 'PUT', {
+      xp: this.lastSentX / 100,
+      t: 0,
+      stop_on_target: true,
+      immediate_rsp: true,
+    }, true)
   }
 
   async stop() {
+    this.stopSendTimer()
+    await this.stopMovement()
     this.connected = false
     this.errorMessage = null
-
-    try {
-      await this.cleanup()
-    } catch {
-      // ignore
-    }
-
     this.notifyStatusChange()
-  }
-
-  private playbackStarted = false
-  private _testPatternRunning = false
-  private _testPatternTimer: ReturnType<typeof setInterval> | null = null
-
-  private _diagnosticRunning = false
-  private _diagnosticTimer: ReturnType<typeof setTimeout> | null = null
-  private _diagnosticSendTimer: ReturnType<typeof setInterval> | null = null
-  private _diagnosticPollTimer: ReturnType<typeof setInterval> | null = null
-  private _diagnosticResolve: ((result: DiagnosticResult | null) => void) | null = null
-
-  get isTestPatternRunning() {
-    return this._testPatternRunning
-  }
-
-  get isDiagnosticRunning() {
-    return this._diagnosticRunning
   }
 
   inputPosition(position: number) {
@@ -512,116 +294,74 @@ export class HandyDriver {
     this.onPoint({ position, duration: 0 })
   }
 
-  // Runs a triangle wave test pattern on the device.
-  // Bypasses OutputProcessor and dead zone — pushes clean points directly to stream.
-  // onPoint is called with each target position (0-1) for graph display.
+  get statusText(): string {
+    if (this.connected) return `Connected to [${this.connectionKey}]`
+    return 'Not connected'
+  }
+
+  destroy() {
+    this.stop()
+    this.processor.removeOutput(this.outputHandler)
+  }
+
+  // --- Test Pattern ---
+
+  private _testPatternRunning = false
+  private _testPatternTimer: ReturnType<typeof setInterval> | null = null
+
+  get isTestPatternRunning() {
+    return this._testPatternRunning
+  }
+
   async runTestPattern(onPoint?: (position: number) => void): Promise<void> {
     if (!this.connected || this._testPatternRunning || this._diagnosticRunning) return
 
     this._testPatternRunning = true
     this.notifyStatusChange()
 
-    // Reset for test pattern — create a fresh stream
-    await this.cleanup()
-
-    this.startTime = 0
-    this.lastPointX = -1
-    this.playbackStarted = false
-
-    const stream = await this.createStream()
-    if (!stream) {
-      this.errorMessage = 'Failed to create stream for test pattern.'
-      this._testPatternRunning = false
-      this.notifyStatusChange()
-      return
-    }
-    this.streamInfo = stream
-
-    const setupResp = await this.deviceRequest('stream/setup', 'PUT', {
-      stream_ref: stream.stream_ref,
-    })
-    if (!setupResp.ok) {
-      this.errorMessage = 'Failed to setup test pattern.'
-      this._testPatternRunning = false
-      this.notifyStatusChange()
-      return
-    }
-
-    // Generate test pattern: short bounces at bottom, middle, then top
-    // Uses sparse keypoints — device interpolates between them
+    // Generate test pattern keypoints
     const bounceAmp = 15
-    const bounceDuration = 400 // ms per up-down
-    const transitionMs = 600 // ms to glide between levels
+    const bounceDuration = 400
+    const transitionMs = 600
     const levels = [15, 50, 85]
     const bouncesPerLevel = 2
-    const testPoints: StreamPoint[] = []
+    const testPoints: { t: number; x: number }[] = []
     let t = 0
-
-    const addPoint = (x: number) => {
-      testPoints.push({ t: t + this.millisecondsOffset, x: Math.max(0, Math.min(100, x)) })
-    }
 
     for (let li = 0; li < levels.length; li++) {
       const center = levels[li]
-
-      // Transition: single keypoint at destination — device glides there
       if (li > 0) {
         t += transitionMs
-        addPoint(center - bounceAmp)
+        testPoints.push({ t, x: Math.max(0, Math.min(100, center - bounceAmp)) })
       }
-
-      // Bounces: just bottom/top keypoints
       for (let b = 0; b < bouncesPerLevel; b++) {
-        addPoint(center - bounceAmp)
+        testPoints.push({ t, x: Math.max(0, Math.min(100, center - bounceAmp)) })
         t += bounceDuration / 2
-        addPoint(center + bounceAmp)
+        testPoints.push({ t, x: Math.max(0, Math.min(100, center + bounceAmp)) })
         t += bounceDuration / 2
       }
-      addPoint(center - bounceAmp)
+      testPoints.push({ t, x: Math.max(0, Math.min(100, center - bounceAmp)) })
     }
 
     const durationMs = t
+    const startTime = Date.now()
 
-    // Hold at final position so the device doesn't drift when stream runs dry
-    const lastX = testPoints[testPoints.length - 1].x
-    testPoints.push({ t: t + 30000 + this.millisecondsOffset, x: lastX })
-
-    // Push all points to stream
-    await this.pushPoints(testPoints)
-
-    // Start playback
-    this.startTime = Date.now()
-    const now = Date.now()
-    const resp = await this.deviceRequest('stream/play', 'PUT', {
-      start_time: 0,
-      server_time: now + this.clientServerTimeOffset,
-    })
-    if (!resp.ok) {
-      this.errorMessage = 'Failed to start test pattern playback.'
-      this._testPatternRunning = false
-      this.notifyStatusChange()
-      return
-    }
-
-    // Display points on graph in real-time
-    let pointIndex = 0
     return new Promise<void>((resolve) => {
       this._testPatternTimer = setInterval(() => {
-        const elapsed = Date.now() - this.startTime
-        // Emit all points up to current time for graph display
-        while (pointIndex < testPoints.length) {
-          const p = testPoints[pointIndex]
-          const pointTime = p.t - this.millisecondsOffset
-          if (pointTime > elapsed) break
-          onPoint?.(p.x / 100)
-          pointIndex++
+        const elapsed = Date.now() - startTime
+        const x = this.interpolatePattern(testPoints, elapsed)
+        if (x !== null) {
+          this.currentX = x
+          this.lastInputTime = Date.now()
+          this.movementStopped = false
+          onPoint?.(x / 100)
         }
 
         if (elapsed >= durationMs + 500 || !this.connected) {
           this.stopTestPattern()
           resolve()
         }
-      }, 50)
+      }, 30)
     })
   }
 
@@ -636,46 +376,49 @@ export class HandyDriver {
 
   // --- Diagnostic Mode ---
 
+  private _diagnosticRunning = false
+  private _diagnosticTimer: ReturnType<typeof setTimeout> | null = null
+  private _diagnosticSendTimer: ReturnType<typeof setInterval> | null = null
+  private _diagnosticPollTimer: ReturnType<typeof setInterval> | null = null
+  private _diagnosticResolve: ((result: DiagnosticResult | null) => void) | null = null
+
+  get isDiagnosticRunning() {
+    return this._diagnosticRunning
+  }
+
   async getSliderState(): Promise<SliderState | null> {
     const resp = await this.deviceRequest('slider/state', 'GET', undefined, true)
     if (!resp.ok) return null
     return resp.result as SliderState
   }
 
-  // Generate pattern points for diagnostic. Returns array of {t, x} for the full duration.
-  // 'bounce' is the default: bounces at top/mid/bottom in a sequence that tests
-  // different regions, transitions, and speeds.
   private generateDiagnosticPattern(pattern: DiagnosticConfig['pattern'], durationMs: number, intervalMs: number): { t: number; x: number }[] {
     const points: { t: number; x: number }[] = []
 
     if (pattern === 'bounce') {
-      // Sequence of bounce zones: [center, amplitude, bounceMs, count]
-      // Tests different regions, speeds, and stroke sizes
       const zones: [number, number, number, number][] = [
-        [50, 45, 600, 2],  // full stroke, slow warmup
-        [80, 12, 350, 3],  // top, small fast bounces
-        [50, 25, 500, 3],  // middle, medium speed, half stroke
-        [20, 12, 350, 3],  // bottom, small fast bounces
-        [50, 45, 400, 3],  // full stroke, medium speed
-        [80, 10, 250, 4],  // top, tiny fast bounces
-        [50, 15, 600, 2],  // middle, small slow bounces
-        [20, 10, 250, 4],  // bottom, tiny fast bounces
-        [50, 45, 300, 3],  // full stroke, fast
-        [80, 12, 400, 2],  // top, small slow
-        [50, 25, 350, 3],  // middle, medium fast
-        [20, 12, 400, 2],  // bottom, small slow
+        [50, 45, 600, 2],
+        [80, 12, 350, 3],
+        [50, 25, 500, 3],
+        [20, 12, 350, 3],
+        [50, 45, 400, 3],
+        [80, 10, 250, 4],
+        [50, 15, 600, 2],
+        [20, 10, 250, 4],
+        [50, 45, 300, 3],
+        [80, 12, 400, 2],
+        [50, 25, 350, 3],
+        [20, 12, 400, 2],
       ]
       const transitionMs = 500
       let t = 0
 
       for (let zi = 0; zi < zones.length; zi++) {
         const [center, amp, bounceMs, count] = zones[zi]
-        // Transition to zone start
         if (zi > 0) {
           points.push({ t, x: center - amp })
           t += transitionMs
         }
-        // Bounces
         for (let b = 0; b < count; b++) {
           points.push({ t, x: center - amp })
           t += bounceMs / 2
@@ -687,7 +430,6 @@ export class HandyDriver {
       return points
     }
 
-    // Other pattern types use computed values at each interval
     const numPoints = Math.floor(durationMs / intervalMs)
     for (let i = 0; i <= numPoints; i++) {
       const t = i * intervalMs
@@ -721,7 +463,6 @@ export class HandyDriver {
     return points
   }
 
-  // Interpolate between keypoints at time t
   private interpolatePattern(keypoints: { t: number; x: number }[], t: number): number | null {
     if (keypoints.length === 0) return null
     if (t <= keypoints[0].t) return keypoints[0].x
@@ -735,9 +476,6 @@ export class HandyDriver {
     return null
   }
 
-  // Live diagnostic: feeds pattern through the real input pipeline
-  // (onPoint → pendingPoints → flushPoints → push) while polling device position.
-  // Requires an active connection — uses the existing stream, no re-setup.
   async runDiagnostic(
     config: Partial<DiagnosticConfig> = {},
     onSentPoint?: (position: number) => void,
@@ -748,23 +486,21 @@ export class HandyDriver {
     const cfg: DiagnosticConfig = {
       pattern: config.pattern ?? 'bounce',
       durationMs: config.durationMs ?? 15000,
-      pushIntervalMs: config.pushIntervalMs ?? 50,
-      timestampOffsetMs: config.timestampOffsetMs ?? 150,
+      pushIntervalMs: config.pushIntervalMs ?? SEND_INTERVAL_MS,
+      timestampOffsetMs: config.timestampOffsetMs ?? 0,
       pollIntervalMs: config.pollIntervalMs ?? 50,
     }
 
     this._diagnosticRunning = true
     this.notifyStatusChange()
 
-    // Generate pattern keypoints
     const keypoints = this.generateDiagnosticPattern(cfg.pattern, cfg.durationMs, cfg.pushIntervalMs)
     const actualDurationMs = keypoints.length > 0 ? keypoints[keypoints.length - 1].t : cfg.durationMs
 
-    console.log(`Diagnostic: live mode, ${keypoints.length} keypoints, ${actualDurationMs}ms duration`)
+    console.log(`HDSP Diagnostic: ${keypoints.length} keypoints, ${actualDurationMs}ms duration`)
 
-    // Probe slider state to verify API availability
     const probeState = await this.getSliderState()
-    console.log('Diagnostic: slider probe result:', probeState)
+    console.log('HDSP Diagnostic: slider probe result:', probeState)
 
     const sentPoints: { t: number; x: number }[] = []
     const actualPoints: { t: number; x: number }[] = []
@@ -773,9 +509,7 @@ export class HandyDriver {
     return new Promise<DiagnosticResult | null>((resolve) => {
       this._diagnosticResolve = resolve
 
-      // Feed interpolated pattern through the live input path every ~30ms.
-      // This simulates continuous input (like a user moving a slider) going
-      // through onPoint → dead zone → pendingPoints → flushPoints → pushPoints.
+      // Feed pattern and send HDSP commands directly every ~30ms
       this._diagnosticSendTimer = setInterval(() => {
         if (!this._diagnosticRunning) return
         const elapsed = Date.now() - diagnosticStart
@@ -784,38 +518,34 @@ export class HandyDriver {
         const x = this.interpolatePattern(keypoints, elapsed)
         if (x === null) return
 
-        // Feed through the real live path
-        this.onPoint({ position: x / 100, duration: 0 })
+        // Set currentX so the send timer picks it up
+        this.currentX = x
+        this.lastInputTime = Date.now()
+        this.movementStopped = false
         sentPoints.push({ t: elapsed, x })
         onSentPoint?.(x / 100)
       }, 30)
 
-      // Poll loop: temporarily pause push timer to avoid HTTP connection contention,
-      // do the poll, then resume pushes. With 600ms offset buffer, a ~150ms pause is safe.
+      // Poll device position. No send-pause for HDSP — with immediate_rsp,
+      // responses are tiny so connection contention is minimal.
+      this.sendCount = 0
       let pollInFlight = false
-      let pollCount = 0
       this._diagnosticPollTimer = setInterval(async () => {
         if (!this._diagnosticRunning || pollInFlight) return
         pollInFlight = true
         try {
-          // Pause pushes so poll gets a clean connection
-          this.stopPushTimer()
           const elapsed = Date.now() - diagnosticStart
           const state = await this.getSliderState()
-          pollCount++
           if (state) {
             const x = Math.max(0, Math.min(1, state.position)) * 100
             actualPoints.push({ t: elapsed, x })
             onActualPoint?.(Math.max(0, Math.min(1, state.position)))
           }
         } finally {
-          // Resume pushes
-          if (this._diagnosticRunning) this.startPushTimer()
           pollInFlight = false
         }
-      }, 200) // Poll every 200ms — gives ~90 readings over 18s
+      }, 200)
 
-      // End after duration + buffer
       this._diagnosticTimer = setTimeout(() => {
         this.finishDiagnostic(sentPoints, actualPoints, cfg)
       }, actualDurationMs + 1000)
@@ -834,6 +564,7 @@ export class HandyDriver {
     this._diagnosticPollTimer = null
     this._diagnosticTimer = null
 
+    console.log(`HDSP Diagnostic done: ${this.sendCount} commands sent, ${actualPoints.length} poll readings`)
     const result = this.computeDiagnosticResult(sentPoints, actualPoints, config)
     console.log('DIAG_RESULT', JSON.stringify(result))
 
@@ -884,7 +615,6 @@ export class HandyDriver {
       return null
     }
 
-    // Cross-correlation: find lag that minimizes RMS between actual and time-shifted sent
     let bestLag = 0
     let bestRms = Infinity
     for (let lag = 0; lag <= 2000; lag += 10) {
@@ -901,7 +631,6 @@ export class HandyDriver {
       }
     }
 
-    // Compute accuracy and overshoot with best lag
     let sumSq = 0, count = 0, maxOvershoot = 0
     for (const a of actualPoints) {
       const s = interp(sentPoints, a.t - bestLag)
@@ -920,15 +649,5 @@ export class HandyDriver {
       dataPoints,
       config,
     }
-  }
-
-  get statusText(): string {
-    if (this.connected) return `Connected to [${this.connectionKey}]`
-    return 'Not connected'
-  }
-
-  destroy() {
-    this.stop()
-    this.processor.removeOutput(this.outputHandler)
   }
 }

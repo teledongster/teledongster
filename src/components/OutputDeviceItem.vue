@@ -19,17 +19,22 @@ const isConnected = ref(props.device.driver.connected)
 const hasError = ref(!!props.device.driver.errorMessage)
 
 let unsubscribe: (() => void) | null = null
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+function syncStatus() {
+  statusText.value = props.device.driver.statusText
+  isConnected.value = props.device.driver.connected
+  hasError.value = !!props.device.driver.errorMessage
+}
 
 onMounted(() => {
-  unsubscribe = props.device.driver.onStatusChange(() => {
-    statusText.value = props.device.driver.statusText
-    isConnected.value = props.device.driver.connected
-    hasError.value = !!props.device.driver.errorMessage
-  })
+  unsubscribe = props.device.driver.onStatusChange(syncStatus)
+  pollTimer = setInterval(syncStatus, 500)
 })
 
 onUnmounted(() => {
   unsubscribe?.()
+  if (pollTimer) clearInterval(pollTimer)
 })
 </script>
 
