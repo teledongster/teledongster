@@ -1,51 +1,49 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import type { FunscriptDriver } from '../drivers/funscript'
+import { ref, onMounted, onUnmounted } from "vue";
+import type { FunscriptDriver } from "../drivers/funscript";
 
 const props = defineProps<{
-  driver: FunscriptDriver
-}>()
+  driver: FunscriptDriver;
+}>();
 
-const statusText = ref(props.driver.statusText)
-const errorMessage = ref(props.driver.errorMessage)
+const statusText = ref(props.driver.statusText);
+const errorMessage = ref(props.driver.errorMessage);
 
-let unsubscribe: (() => void) | null = null
-let updateTimer: ReturnType<typeof setInterval> | null = null
+let unsubscribe: (() => void) | null = null;
+let updateTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
   unsubscribe = props.driver.onStatusChange(() => {
-    statusText.value = props.driver.statusText
-    errorMessage.value = props.driver.errorMessage
-  })
-})
+    statusText.value = props.driver.statusText;
+    errorMessage.value = props.driver.errorMessage;
+  });
+});
 
 onUnmounted(() => {
-  unsubscribe?.()
-  if (updateTimer) clearInterval(updateTimer)
-})
+  unsubscribe?.();
+  if (updateTimer) clearInterval(updateTimer);
+});
 
 function startRecording() {
-  props.driver.start()
-  statusText.value = props.driver.statusText
+  props.driver.start();
+  statusText.value = props.driver.statusText;
   updateTimer = setInterval(() => {
-    statusText.value = props.driver.statusText
-  }, 500)
+    statusText.value = props.driver.statusText;
+  }, 500);
 }
 
 function stopRecording() {
   if (updateTimer) {
-    clearInterval(updateTimer)
-    updateTimer = null
+    clearInterval(updateTimer);
+    updateTimer = null;
   }
-  props.driver.stop()
-  statusText.value = props.driver.statusText
+  props.driver.stop();
+  statusText.value = props.driver.statusText;
 }
 
 function download() {
-  props.driver.download()
+  props.driver.download();
 }
-
-
 </script>
 
 <template>

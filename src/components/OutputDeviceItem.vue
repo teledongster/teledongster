@@ -1,50 +1,47 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import type { OutputDeviceEntry } from '../composables/useOutputDevices'
+import { ref, onMounted, onUnmounted } from "vue";
+import type { OutputDeviceEntry } from "../composables/useOutputDevices";
 
 const props = defineProps<{
-  device: OutputDeviceEntry
-  selected: boolean
-}>()
+  device: OutputDeviceEntry;
+  selected: boolean;
+}>();
 
 const emit = defineEmits<{
-  select: []
-  remove: []
-}>()
+  select: [];
+  remove: [];
+}>();
 
-const title = props.device.type === 'handy' ? 'The Handy' : 'Funscript Recorder'
+const title = props.device.type === "handy" ? "The Handy" : "Funscript Recorder";
 
-const statusText = ref(props.device.driver.statusText)
-const isConnected = ref(props.device.driver.connected)
-const hasError = ref(!!props.device.driver.errorMessage)
+const statusText = ref(props.device.driver.statusText);
+const isConnected = ref(props.device.driver.connected);
+const hasError = ref(!!props.device.driver.errorMessage);
 
-let unsubscribe: (() => void) | null = null
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let unsubscribe: (() => void) | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function syncStatus() {
-  statusText.value = props.device.driver.statusText
-  isConnected.value = props.device.driver.connected
-  hasError.value = !!props.device.driver.errorMessage
+  statusText.value = props.device.driver.statusText;
+  isConnected.value = props.device.driver.connected;
+  hasError.value = !!props.device.driver.errorMessage;
 }
 
 onMounted(() => {
-  unsubscribe = props.device.driver.onStatusChange(syncStatus)
-  pollTimer = setInterval(syncStatus, 500)
-})
+  unsubscribe = props.device.driver.onStatusChange(syncStatus);
+  pollTimer = setInterval(syncStatus, 500);
+});
 
 onUnmounted(() => {
-  unsubscribe?.()
-  if (pollTimer) clearInterval(pollTimer)
-})
+  unsubscribe?.();
+  if (pollTimer) clearInterval(pollTimer);
+});
 </script>
 
 <template>
   <div class="device-item" :class="{ selected }" @click="emit('select')">
     <div class="device-header">
-      <span
-        class="status-dot"
-        :class="hasError ? 'error' : isConnected ? 'ok' : 'off'"
-      ></span>
+      <span class="status-dot" :class="hasError ? 'error' : isConnected ? 'ok' : 'off'"></span>
       <span class="device-title">{{ title }}</span>
       <button class="small danger remove-btn" @click.stop="emit('remove')">X</button>
     </div>

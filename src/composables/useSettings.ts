@@ -1,23 +1,21 @@
-import { useLocalStorage } from '@vueuse/core'
+import { useLocalStorage } from "@vueuse/core";
 
 export interface SavedOutputDevice {
-  type: 'handy' | 'funscript'
-  connectionKey?: string
-  peakMotionMode?: boolean
-  filterTimeMs?: number
-  filterStrength?: number
+  type: "handy" | "funscript";
+  connectionKey?: string;
+  peakMotionMode?: boolean;
+  filterTimeMs?: number;
+  filterStrength?: number;
 }
 
 export interface SavedSettings {
-  outputDevices: SavedOutputDevice[]
+  outputDevices: SavedOutputDevice[];
 }
 
 const defaultSettings: SavedSettings = {
   outputDevices: [],
-}
+};
 
-export const settings = useLocalStorage<SavedSettings>(
-  'teledong-commander-settings',
-  defaultSettings,
-  { mergeDefaults: true }
-)
+export const settings = useLocalStorage<SavedSettings>("teledongster-settings", defaultSettings, {
+  mergeDefaults: true,
+});

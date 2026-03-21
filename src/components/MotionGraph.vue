@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
-import { useMotionGraph } from '../composables/useMotionGraph'
+import { onMounted } from "vue";
+import { useMotionGraph } from "../composables/useMotionGraph";
 
-const graph = useMotionGraph()
-const canvasRef = graph.canvasRef
+const graph = useMotionGraph();
+const canvasRef = graph.canvasRef;
 
 onMounted(() => {
-  graph.start()
-})
+  graph.start();
+});
 
 defineExpose({
   addInputPoint: graph.addInputPoint,
   addOutputPoint: graph.addOutputPoint,
-})
+});
 </script>
 
 <template>

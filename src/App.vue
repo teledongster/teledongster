@@ -1,33 +1,33 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import InputPanel from './components/InputPanel.vue'
-import OutputPanel from './components/OutputPanel.vue'
+import { ref } from "vue";
+import InputPanel from "./components/InputPanel.vue";
+import OutputPanel from "./components/OutputPanel.vue";
 
-const inputPanelRef = ref<InstanceType<typeof InputPanel> | null>(null)
-const outputPanelRef = ref<InstanceType<typeof OutputPanel> | null>(null)
+const inputPanelRef = ref<InstanceType<typeof InputPanel> | null>(null);
+const outputPanelRef = ref<InstanceType<typeof OutputPanel> | null>(null);
 
 function onPosition(value: number) {
-  outputPanelRef.value?.inputPosition(value)
+  outputPanelRef.value?.inputPosition(value);
 }
 
 function onTestPatternPoint(position: number) {
-  inputPanelRef.value?.addOutputPoint(position)
-  inputPanelRef.value?.setSliderPosition(position)
+  inputPanelRef.value?.addOutputPoint(position);
+  inputPanelRef.value?.setSliderPosition(position);
 }
 
 function onDiagnosticSentPoint(position: number) {
-  inputPanelRef.value?.addInputPoint(position)
+  inputPanelRef.value?.addInputPoint(position);
 }
 
 function onDiagnosticActualPoint(position: number) {
-  inputPanelRef.value?.addOutputPoint(position)
+  inputPanelRef.value?.addOutputPoint(position);
 }
 </script>
 
 <template>
   <div class="app-container">
     <header class="app-header">
-      <h1>Teledong Commander <span class="version">Web</span></h1>
+      <h1>Teledongster</h1>
     </header>
     <main class="app-main">
       <div class="panel-column">

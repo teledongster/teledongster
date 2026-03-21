@@ -1,45 +1,45 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
-import type { OutputDeviceEntry } from '../composables/useOutputDevices'
-import type { OutputProcessor } from '../drivers/output-processor'
+import { ref, watch, computed } from "vue";
+import type { OutputDeviceEntry } from "../composables/useOutputDevices";
+import type { OutputProcessor } from "../drivers/output-processor";
 
 const props = defineProps<{
-  device: OutputDeviceEntry
-}>()
+  device: OutputDeviceEntry;
+}>();
 
 const emit = defineEmits<{
-  save: []
-}>()
+  save: [];
+}>();
 
-const processor = computed<OutputProcessor>(() => props.device.driver.processor)
+const processor = computed<OutputProcessor>(() => props.device.driver.processor);
 
-const peakMotionMode = ref(processor.value.peakMotionMode)
-const filterTimeMs = ref(processor.value.filterTimeMs)
-const filterStrength = ref(processor.value.filterStrength)
+const peakMotionMode = ref(processor.value.peakMotionMode);
+const filterTimeMs = ref(processor.value.filterTimeMs);
+const filterStrength = ref(processor.value.filterStrength);
 
 watch(
   () => props.device.id,
   () => {
-    peakMotionMode.value = processor.value.peakMotionMode
-    filterTimeMs.value = processor.value.filterTimeMs
-    filterStrength.value = processor.value.filterStrength
-  }
-)
+    peakMotionMode.value = processor.value.peakMotionMode;
+    filterTimeMs.value = processor.value.filterTimeMs;
+    filterStrength.value = processor.value.filterStrength;
+  },
+);
 
 watch(peakMotionMode, (v) => {
-  processor.value.peakMotionMode = v
-  emit('save')
-})
+  processor.value.peakMotionMode = v;
+  emit("save");
+});
 
 watch(filterTimeMs, (v) => {
-  processor.value.filterTimeMs = v
-  emit('save')
-})
+  processor.value.filterTimeMs = v;
+  emit("save");
+});
 
 watch(filterStrength, (v) => {
-  processor.value.filterStrength = v
-  emit('save')
-})
+  processor.value.filterStrength = v;
+  emit("save");
+});
 </script>
 
 <template>
@@ -72,7 +72,7 @@ watch(filterStrength, (v) => {
   margin-top: 8px;
 }
 
-.advanced-settings label input[type='checkbox'] {
+.advanced-settings label input[type="checkbox"] {
   margin-right: 6px;
   accent-color: var(--accent);
 }
