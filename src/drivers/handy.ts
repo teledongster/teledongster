@@ -1,8 +1,7 @@
 // Handy output driver - HDSP (Handy Direct Streaming Protocol)
 // Fire-and-forget direct position commands. No buffering on device.
-// Recommended by Lars for live sensor data: "just play a few points and forget about them."
 //
-// Uses PUT hdsp/xat: absolute position (mm) + time (ms to get there).
+// Uses PUT hdsp/xpt: position (%) + time (ms to get there).
 // Device plays points immediately on receipt, doesn't wait for current movement to finish.
 // 5-10 commands/sec is fine; server-side throttling handles rate limiting.
 
@@ -162,7 +161,7 @@ export class HandyDriver {
           this.errorMessage +=
             " Make sure it is updated to FW4, is online, and the connection key is correct.";
         }
-        console.error("HDSP xat test failed:", testResp.error);
+        console.error("HDSP xpt test failed:", testResp.error);
         this.notifyStatusChange();
         return;
       }
