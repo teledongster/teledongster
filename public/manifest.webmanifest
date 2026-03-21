@@ -1,0 +1,12 @@
+{
+  "name": "Teledongster",
+  "short_name": "Teledongster",
+  "description": "Browser-based Teledong motion capture and streaming",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0a1628",
+  "theme_color": "#0a1628",
+  "icons": [
+    { "src": "logo.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
