@@ -8,12 +8,5 @@ export default defineConfig({
   plugins: [vue(), ...(useHttps ? [basicSsl()] : [])],
   server: {
     host: true,
-    proxy: {
-      '/handy-api': {
-        target: 'https://www.handyfeeling.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/handy-api/, '/api/handy-rest/v3'),
-      },
-    },
   },
 })

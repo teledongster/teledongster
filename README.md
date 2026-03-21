@@ -45,6 +45,10 @@ pnpm build
 | `pnpm format` | Format code with oxfmt |
 | `pnpm format:check` | Check formatting without writing |
 
+## Development Tips
+
+When working with The Handy, the browser sends CORS preflight (OPTIONS) requests for every API call. With DevTools open and caching disabled, these requests are not cached and can pile up quickly. To keep things smooth, make sure "Disable cache" is unchecked in the Network tab while testing Handy connectivity.
+
 ## Tech Stack
 
 - Vue 3 (Composition API)
