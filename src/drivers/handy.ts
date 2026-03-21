@@ -31,9 +31,8 @@ export interface DiagnosticResult {
   config: DiagnosticConfig;
 }
 
-const API_URL = "https://www.handyfeeling.com/api/handy-rest/v3/";
-const DEVICE_API_URL = "https://www.handyfeeling.com/api/handy-rest/v3-next";
-const APP_ID = "Bl4tZ-SEEDFxQMy1.2~GJdv2dAZp3OjW";
+const API_URL = "https://www.handyfeeling.com/api/handy-rest/v3";
+const APP_ID = "4p-wcc0RjG~wNyM4GThZ_zqqS-d1nTai";
 
 const SEND_INTERVAL_MS = 100; // ~10 commands/sec
 const POSITION_DEAD_ZONE = 1; // minimum change to send
@@ -119,42 +118,10 @@ export class HandyDriver {
     }
 
     try {
-      const response = await fetch(`${API_URL}${endpoint}`, options);
+      const response = await fetch(`${API_URL}/${endpoint}`, options);
       const text = await response.text();
       const data = text ? JSON.parse(text) : null;
-      if (!quiet) console.log(`HDSP ${method} ${endpoint} -> ${response.status}`, data);
-      if (response.ok) {
-        return { ok: true, result: data?.result ?? data };
-      }
-      return { ok: false, error: data?.error ?? data };
-    } catch (e) {
-      return { ok: false, error: e };
-    }
-  }
-
-  // v3-next API request (for slider/state polling during diagnostic)
-  private async deviceRequest(
-    endpoint: string,
-    method: "GET" | "PUT",
-    body?: any,
-    quiet = false,
-  ): Promise<{ ok: boolean; result?: any; error?: any }> {
-    const headers: Record<string, string> = {
-      accept: "application/json",
-      "X-Connection-Key": this.connectionKey,
-      "X-Api-Key": APP_ID,
-    };
-    const options: RequestInit = { method, headers };
-    if (body !== undefined && method !== "GET") {
-      headers["Content-Type"] = "application/json";
-      options.body = JSON.stringify(body);
-    }
-
-    try {
-      const response = await fetch(`${DEVICE_API_URL}/${endpoint}`, options);
-      const text = await response.text();
-      const data = text ? JSON.parse(text) : null;
-      if (!quiet) console.log(`Device ${method} ${endpoint} -> ${response.status}`, data);
+      if (!quiet) console.log(`Handy ${method} ${endpoint} -> ${response.status}`, data);
       if (response.ok) {
         return { ok: true, result: data?.result ?? data };
       }
@@ -395,7 +362,7 @@ export class HandyDriver {
   }
 
   async getSliderState(): Promise<SliderState | null> {
-    const resp = await this.deviceRequest("slider/state", "GET", undefined, true);
+    const resp = await this.apiRequest("slider/state", "GET", undefined, true);
     if (!resp.ok) return null;
     return resp.result as SliderState;
   }

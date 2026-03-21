@@ -87,19 +87,20 @@ export function useMotionGraph() {
     const now = Date.now() - startTime;
     const windowStart = now - windowMs;
 
-    function drawLine(points: GraphPoint[], color: string, lineWidth: number) {
+    function drawLine(points: GraphPoint[], color: string, lineWidth: number, gapMs = 0) {
       if (points.length < 2) return;
       ctx!.strokeStyle = color;
       ctx!.lineWidth = lineWidth * dpr;
       ctx!.beginPath();
 
-      const GAP_THRESHOLD_MS = 200;
       let prevTime = -Infinity;
       for (const p of points) {
         if (p.time < windowStart) continue;
         const x = ((p.time - windowStart) / windowMs) * w;
         const y = (1 - p.value) * h; // 0 (fully in) at bottom, 1 (fully out) at top
-        if (p.time - prevTime > GAP_THRESHOLD_MS) {
+        if (gapMs > 0 && p.time - prevTime > gapMs) {
+          ctx!.moveTo(x, y);
+        } else if (prevTime === -Infinity) {
           ctx!.moveTo(x, y);
         } else {
           ctx!.lineTo(x, y);
@@ -110,7 +111,7 @@ export function useMotionGraph() {
       ctx!.stroke();
     }
 
-    drawLine(inputPoints, "#ffffff", 2);
+    drawLine(inputPoints, "#ffffff", 2, 200);
     drawLine(outputPoints, "#9b59b6", 1.5);
 
     // Guide line for slider mode
