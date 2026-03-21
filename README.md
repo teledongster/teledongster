@@ -1,4 +1,4 @@
-# [Teledongster](https://teledongster.github.io)
+# <img src="public/logo.svg" width="32" height="32" alt="" /> [Teledongster](https://teledongster.github.io)
 
 A browser-based tool for capturing motion from a [Teledong](https://teledong.com) device and streaming it in real-time to output devices like [The Handy](https://www.thehandy.com), or recording it as a Funscript file.
 

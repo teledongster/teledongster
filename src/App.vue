@@ -39,7 +39,7 @@ function onDiagnosticActualPoint(position: number) {
       </svg>
     </a>
     <header class="app-header">
-      <h1>Teledongster</h1>
+      <h1><img src="/logo.svg" alt="" class="app-logo" /> Teledongster</h1>
     </header>
     <main class="app-main">
       <div class="panel-column">
@@ -86,6 +86,14 @@ function onDiagnosticActualPoint(position: number) {
   font-size: 22px;
   font-weight: 600;
   color: var(--accent-light);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-logo {
+  height: 28px;
+  width: auto;
 }
 
 .version {
