@@ -137,29 +137,32 @@ function statusText(): string {
     </div>
 
     <div class="mode-controls">
-      <div class="field-group row" :style="{ visibility: inputMode === 'teledong' ? 'visible' : 'hidden' }">
-      <button
-        @click="teledong.connect()"
-        :disabled="!isWebUSBSupported || teledong.state.value !== 'NotConnected'"
+      <div
+        class="field-group row"
+        :style="{ visibility: inputMode === 'teledong' ? 'visible' : 'hidden' }"
       >
-        Connect
-      </button>
-      <button
-        @click="teledong.disconnect()"
-        class="secondary"
-        :disabled="teledong.state.value === 'NotConnected'"
-      >
-        Disconnect
-      </button>
-      <button
-        @click="teledong.calibrate()"
-        class="secondary"
-        :disabled="
-          teledong.state.value === 'NotConnected' || teledong.state.value === 'Calibrating'
-        "
-      >
-        Calibrate
-      </button>
+        <button
+          @click="teledong.connect()"
+          :disabled="!isWebUSBSupported || teledong.state.value !== 'NotConnected'"
+        >
+          Connect
+        </button>
+        <button
+          @click="teledong.disconnect()"
+          class="secondary"
+          :disabled="teledong.state.value === 'NotConnected'"
+        >
+          Disconnect
+        </button>
+        <button
+          @click="teledong.calibrate()"
+          class="secondary"
+          :disabled="
+            teledong.state.value === 'NotConnected' || teledong.state.value === 'Calibrating'
+          "
+        >
+          Calibrate
+        </button>
       </div>
       <div v-if="inputMode === 'slider'" class="slider-hint text-muted">
         Drag the knob on the graph or click anywhere to set position.
