@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, onUnmounted } from "vue";
 import MotionGraph from "./MotionGraph.vue";
 import { useTeledong } from "../composables/useTeledong";
 import { TeledongState } from "../drivers/teledong-sdk";
@@ -33,6 +33,33 @@ defineExpose({
 
 const isWebUSBSupported = !!navigator.usb;
 
+const CALIBRATION_DURATION_S = 10;
+const calibrationRemaining = ref(0);
+let calibrationTimer: ReturnType<typeof setInterval> | null = null;
+
+watch(
+  () => teledong.state.value,
+  (state) => {
+    if (state === TeledongState.Calibrating) {
+      calibrationRemaining.value = CALIBRATION_DURATION_S;
+      calibrationTimer = setInterval(() => {
+        calibrationRemaining.value--;
+        if (calibrationRemaining.value <= 0 && calibrationTimer) {
+          clearInterval(calibrationTimer);
+          calibrationTimer = null;
+        }
+      }, 1000);
+    } else if (calibrationTimer) {
+      clearInterval(calibrationTimer);
+      calibrationTimer = null;
+    }
+  },
+);
+
+onUnmounted(() => {
+  if (calibrationTimer) clearInterval(calibrationTimer);
+});
+
 function statusDotClass(): string {
   if (inputMode.value === "slider") return "ok";
   switch (teledong.state.value) {
@@ -53,7 +80,7 @@ function statusText(): string {
     case TeledongState.Ok:
       return "Teledong connected, OK";
     case TeledongState.Calibrating:
-      return "Calibrating...";
+      return `Calibrating... ${calibrationRemaining.value}s`;
     case TeledongState.Error:
       return "ERROR";
     default:
@@ -109,7 +136,8 @@ function statusText(): string {
       Bad calibration detected. Please recalibrate.
     </div>
 
-    <div class="field-group row" v-if="inputMode === 'teledong'">
+    <div class="mode-controls">
+      <div class="field-group row" :style="{ visibility: inputMode === 'teledong' ? 'visible' : 'hidden' }">
       <button
         @click="teledong.connect()"
         :disabled="!isWebUSBSupported || teledong.state.value !== 'NotConnected'"
@@ -132,22 +160,18 @@ function statusText(): string {
       >
         Calibrate
       </button>
+      </div>
+      <div v-if="inputMode === 'slider'" class="slider-hint text-muted">
+        Drag the knob on the graph or click anywhere to set position.
+      </div>
     </div>
 
-    <div v-if="inputMode === 'slider'" class="slider-container">
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.005"
-        v-model.number="sliderPosition"
-        class="vertical-slider"
-        orient="vertical"
-      />
-      <span class="text-muted">{{ sliderPosition.toFixed(2) }}</span>
-    </div>
-
-    <MotionGraph ref="graphRef" />
+    <MotionGraph
+      ref="graphRef"
+      :interactive="inputMode === 'slider'"
+      :knob-position="sliderPosition"
+      @drag="sliderPosition = $event"
+    />
 
     <div style="margin-top: 8px">
       <button class="small secondary" @click="showInfo = !showInfo">
@@ -185,6 +209,21 @@ function statusText(): string {
 </template>
 
 <style scoped>
+.mode-controls {
+  position: relative;
+}
+
+.slider-hint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  font-size: 13px;
+}
+
 .info-panel {
   margin-top: 8px;
   padding: 8px;
@@ -192,21 +231,5 @@ function statusText(): string {
   border-radius: 6px;
   font-family: monospace;
   font-size: 12px;
-}
-
-.slider-container {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-  height: 150px;
-}
-
-.vertical-slider {
-  writing-mode: vertical-lr;
-  direction: rtl;
-  height: 100%;
-  width: 32px;
-  cursor: pointer;
 }
 </style>

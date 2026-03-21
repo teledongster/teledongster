@@ -17,6 +17,7 @@ export function useMotionGraph() {
   const MIN_INTERVAL_MS = 16; // ~60Hz max input rate
   let lastInputTime = 0;
   let lastOutputTime = 0;
+  let guidePosition: number | null = null;
 
   function addInputPoint(value: number) {
     const now = Date.now() - startTime;
@@ -112,6 +113,19 @@ export function useMotionGraph() {
     drawLine(inputPoints, "#ffffff", 2);
     drawLine(outputPoints, "#9b59b6", 1.5);
 
+    // Guide line for slider mode
+    if (guidePosition !== null) {
+      const gy = (1 - guidePosition) * h;
+      ctx.strokeStyle = "rgba(155, 89, 182, 0.5)";
+      ctx.lineWidth = 1 * dpr;
+      ctx.setLineDash([6 * dpr, 4 * dpr]);
+      ctx.beginPath();
+      ctx.moveTo(0, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     animFrame = requestAnimationFrame(render);
   }
 
@@ -133,10 +147,15 @@ export function useMotionGraph() {
     stop();
   });
 
+  function setGuidePosition(pos: number | null) {
+    guidePosition = pos;
+  }
+
   return {
     canvasRef,
     addInputPoint,
     addOutputPoint,
+    setGuidePosition,
     start,
     stop,
   };

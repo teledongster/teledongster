@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code
+.claude/
+.mcp.json
+
+# TypeScript build info
+tsconfig.tsbuildinfo
