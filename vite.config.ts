@@ -5,6 +5,7 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 const network = process.env.NETWORK === '1'
 
 export default defineConfig({
+  base: './',
   plugins: [vue(), ...(network ? [basicSsl()] : [])],
   server: {
     host: network,

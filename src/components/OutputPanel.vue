@@ -57,6 +57,9 @@ function restoreFromSettings() {
 onMounted(() => {
   if (settings.value.outputDevices.length > 0) {
     restoreFromSettings();
+    if (outputDevices.devices.length > 0) {
+      outputDevices.selectedDeviceId.value = outputDevices.devices[0].id;
+    }
   }
 });
 
