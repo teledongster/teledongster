@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:https": "HTTPS=1 vite",
+    "dev:network": "NETWORK=1 vite",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "lint": "oxlint src/",

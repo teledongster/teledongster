@@ -23,11 +23,11 @@ A browser-based tool for capturing motion from a [Teledong](https://teledong.com
 ```bash
 pnpm install
 
-# Development with HTTPS (needed for WebUSB)
-pnpm dev:https
-
-# Development without HTTPS (slider input only)
+# Development (localhost only)
 pnpm dev
+
+# Development with HTTPS + network access (for testing on other devices)
+pnpm dev:network
 
 # Production build
 pnpm build
@@ -37,8 +37,8 @@ pnpm build
 
 | Command | Description |
 |---------|-------------|
-| `pnpm dev` | Start dev server |
-| `pnpm dev:https` | Start dev server with HTTPS |
+| `pnpm dev` | Start dev server (localhost) |
+| `pnpm dev:network` | Start dev server with HTTPS, accessible from network |
 | `pnpm build` | Type-check and build for production |
 | `pnpm preview` | Preview production build |
 | `pnpm lint` | Run oxlint |
