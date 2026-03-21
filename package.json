@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "lint": "oxlint src/",
     "format": "oxfmt src/ index.html",
-    "format:check": "oxfmt --check src/ index.html"
+    "format:check": "oxfmt --check src/ index.html",
+    "types:check": "vue-tsc --noEmit"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.1",
