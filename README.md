@@ -2,6 +2,8 @@
 
 A browser-based tool for capturing motion from a [Teledong](https://teledong.com) device and streaming it in real-time to output devices like [The Handy](https://www.thehandy.com), or recording it as a Funscript file.
 
+**Try it:** [teledongster.github.io](https://teledongster.github.io)
+
 ## Features
 
 - **Teledong input** via WebUSB with calibration support and sensor diagnostics
