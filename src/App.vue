@@ -17,6 +17,7 @@ function onTestPatternPoint(position: number) {
 
 function onDiagnosticSentPoint(position: number) {
   inputPanelRef.value?.addInputPoint(position);
+  inputPanelRef.value?.setSliderPosition(position);
 }
 
 function onDiagnosticActualPoint(position: number) {
