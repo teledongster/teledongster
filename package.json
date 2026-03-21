@@ -12,7 +12,8 @@
     "lint": "oxlint src/",
     "format": "oxfmt src/ index.html",
     "format:check": "oxfmt --check src/ index.html",
-    "types:check": "vue-tsc --noEmit"
+    "types:check": "vue-tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.1",
@@ -28,6 +29,7 @@
     "oxlint": "^1.56.0",
     "typescript": "~5.9.3",
     "vite": "^8.0.1",
+    "vitest": "^4.1.0",
     "vue-tsc": "^2.2.8"
   },
   "pnpm": {

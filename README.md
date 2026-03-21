@@ -41,6 +41,7 @@ pnpm build
 | `pnpm dev:network` | Start dev server with HTTPS, accessible from network |
 | `pnpm build` | Type-check and build for production |
 | `pnpm preview` | Preview production build |
+| `pnpm test` | Run tests |
 | `pnpm lint` | Run oxlint |
 | `pnpm format` | Format code with oxfmt |
 | `pnpm format:check` | Check formatting without writing |
