@@ -3,3 +3,7 @@ import App from "./App.vue";
 import "./style.css";
 
 createApp(App).mount("#app");
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js");
+}

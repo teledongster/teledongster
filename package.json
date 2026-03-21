@@ -10,6 +10,7 @@
     "dev:network": "NETWORK=1 vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
+    "preview:network": "NETWORK=1 vite preview",
     "lint": "oxlint src/",
     "format": "oxfmt src/ index.html",
     "format:check": "oxfmt --check src/ index.html",
