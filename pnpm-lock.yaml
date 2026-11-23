@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@vueuse/core':
-        specifier: ^14.2.1
-        version: 14.2.1(vue@3.5.30(typescript@5.9.3))
+        specifier: ^15.0.0
+        version: 15.1.0(vue@3.5.30(typescript@5.9.3))
       file-saver:
         specifier: ^2.0.5
         version: 2.0.5
@@ -621,8 +621,8 @@ packages:
   '@types/w3c-web-usb@1.0.13':
     resolution: {integrity: sha512-N2nSl3Xsx8mRHZBvMSdNGtzMyeleTvtlEw+ujujgXalPqOjIA6UtrqcB6OzyUjkTbDm3J7P1RNK1lgoO7jxtsw==}
 
-  '@types/web-bluetooth@0.0.21':
-    resolution: {integrity: sha512-oIQLCGWtcFZy2JW77j9k8nHzAOpqMHLQejDA48XXMWH6tjCQHz5RCFz1bzsmROyL6PUm+LLnUiI4BCn221inxA==}
+  '@types/web-bluetooth@0.0.22':
+    resolution: {integrity: sha512-4O7kU0Ut0irZvFyk3EvgDrzFYBQI80Puhkb65I7eV6WTZX4iOo5zoDrEfjDBRB7x5Stz31csoHO4hAjSiRTALw==}
 
   '@vitejs/plugin-basic-ssl@2.2.0':
     resolution: {integrity: sha512-nmyQ1HGRkfUxjsv3jw0+hMhEdZdrtkvMTdkzRUaRWfiO6PCWw2V2Pz3gldCq96Tn9S8htcgdTxw/gmbLLEbfYw==}
@@ -707,16 +707,19 @@ packages:
   '@vue/shared@3.5.30':
     resolution: {integrity: sha512-YXgQ7JjaO18NeK2K9VTbDHaFy62WrObMa6XERNfNOkAhD1F1oDSf3ZJ7K6GqabZ0BvSDHajp8qfS5Sa2I9n8uQ==}
 
-  '@vueuse/core@14.2.1':
-    resolution: {integrity: sha512-3vwDzV+GDUNpdegRY6kzpLm4Igptq+GA0QkJ3W61Iv27YWwW/ufSlOfgQIpN6FZRMG0mkaz4gglJRtq5SeJyIQ==}
+  '@vueuse/core@15.1.0':
+    resolution: {integrity: sha512-OuZ5ecLw/sikX0HFjlJM/p/PkfL0567Ntfov9G0jYlw92QqZpPVikZOoB1Mpe4unZ+7E/QQ+uFpEgAjj2FYRbw==}
+    engines: {node: '>=22'}
     peerDependencies:
       vue: ^3.5.0
 
-  '@vueuse/metadata@14.2.1':
-    resolution: {integrity: sha512-1ButlVtj5Sb/HDtIy1HFr1VqCP4G6Ypqt5MAo0lCgjokrk2mvQKsK2uuy0vqu/Ks+sHfuHo0B9Y9jn9xKdjZsw==}
+  '@vueuse/metadata@15.1.0':
+    resolution: {integrity: sha512-yHKFelRTdQdp7vdjXXEw68Wh9v8OgyxWm1v1aHbGM6Z4qbqHhB6QgB8MTNB76pZYh22wPeALCdr8qjShlxPBHA==}
+    engines: {node: '>=22'}
 
-  '@vueuse/shared@14.2.1':
-    resolution: {integrity: sha512-shTJncjV9JTI4oVNyF1FQonetYAiTBd+Qj7cY89SWbXSkx7gyhrgtEdF2ZAVWS1S3SHlaROO6F2IesJxQEkZBw==}
+  '@vueuse/shared@15.1.0':
+    resolution: {integrity: sha512-JAbQLO+vOULt8MPR4oRbvstBuztTTMIX4LOfCGeBvp9JSgj5OppZDing3gKDrmlyUQvYYFSPIX4dxkfJgdsxWQ==}
+    engines: {node: '>=22'}
     peerDependencies:
       vue: ^3.5.0
 
@@ -1394,7 +1397,7 @@ snapshots:
 
   '@types/w3c-web-usb@1.0.13': {}
 
-  '@types/web-bluetooth@0.0.21': {}
+  '@types/web-bluetooth@0.0.22': {}
 
   '@vitejs/plugin-basic-ssl@2.2.0(vite@8.0.1(esbuild@0.27.3)(terser@5.46.1))':
     dependencies:
@@ -1523,16 +1526,16 @@ snapshots:
 
   '@vue/shared@3.5.30': {}
 
-  '@vueuse/core@14.2.1(vue@3.5.30(typescript@5.9.3))':
+  '@vueuse/core@15.1.0(vue@3.5.30(typescript@5.9.3))':
     dependencies:
-      '@types/web-bluetooth': 0.0.21
-      '@vueuse/metadata': 14.2.1
-      '@vueuse/shared': 14.2.1(vue@3.5.30(typescript@5.9.3))
+      '@types/web-bluetooth': 0.0.22
+      '@vueuse/metadata': 15.1.0
+      '@vueuse/shared': 15.1.0(vue@3.5.30(typescript@5.9.3))
       vue: 3.5.30(typescript@5.9.3)
 
-  '@vueuse/metadata@14.2.1': {}
+  '@vueuse/metadata@15.1.0': {}
 
-  '@vueuse/shared@14.2.1(vue@3.5.30(typescript@5.9.3))':
+  '@vueuse/shared@15.1.0(vue@3.5.30(typescript@5.9.3))':
     dependencies:
       vue: 3.5.30(typescript@5.9.3)
 
